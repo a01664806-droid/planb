@@ -1,5 +1,5 @@
 import streamlit as st
-from modules import ui_home, ui_analysis, ui_map, ui_info
+from modules import ui_home, ui_analysis, ui_map, ui_info, ui_ourteam
 
 st.set_page_config(
     page_title="CDMX Crime Intelligence Platform",
@@ -26,5 +26,5 @@ elif page == "🗺️ Map":
 elif page == "ℹ️ Info":
     ui_info.render()
 else:
-    st.title("👥 Our Team")
-    st.markdown("**Project Leads:** Tú y tu bandita 🔥  \n**Contacto:** agrega tus correos y roles aquí, ca.")
+    ui_ourteam.render()
+    
