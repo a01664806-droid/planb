@@ -99,11 +99,10 @@ def render_main_dashboard():
         st.sidebar.markdown(f"**Usuario:** `Thales`")
 
     # Muestra las opciones de navegación
-    # CAMBIO: Usamos index=0 para que por defecto sea "🏠 Home"
     page = st.sidebar.radio(
         "Ir a:",
         available_pages,
-        index=0 # Ahora siempre arranca en el primer elemento, que es "🏠 Home"
+        index=0 # Arranca en el primer elemento, que es "🏠 Home"
     )
 
     # Botón de "Cerrar sesión"
@@ -113,36 +112,39 @@ def render_main_dashboard():
 
     # 2. Router de páginas (Llamada a los módulos de renderizado)
     # Muestra el título del dashboard solo cuando el usuario está logueado
-    st.title(f"{page.split(' ')[-1]} - {st.session_state.user} View")
+    st.title(f"{page} - {st.session_state.user} View")
 
     try:
-        # Nota: La comparación de cadenas ahora incluye el emoji para ser más robusto
-        if page == "Home":
-            ui_home.render() 
+        # CORRECCIÓN: Los nombres de las páginas deben coincidir exactamente con los elementos de la lista PAGES_...
+        # Si tienes tus módulos instalados, DESCOMENTA las líneas de llamada (e.g., ui_home.render())
+
+        if page == "🏠 Home":
+            ui_home.render()
             st.info("Renderizando la página Home...") # Placeholder
-        elif page == "Análisis":
+        elif page == "📊 Analysis":
             ui_analysis.render()
             st.info("Renderizando la página de Análisis...") # Placeholder
-        elif page == "Map":
+        elif page == "🗺️ Map":
             ui_map.render()
             st.info("Renderizando la página de Mapas...") # Placeholder
-        elif page == "Info":
+        elif page == "ℹ️ Info":
             ui_info.render()
             st.info("Renderizando la página de Información...") # Placeholder
-        elif page == "Our Team":
+        elif page == "👥 Our Team":
             ui_ourteam.render()
             st.info("Renderizando la página Nuestro Equipo...") # Placeholder
-        elif page == "Alertas" and st.session_state.user == "Policía":
+        elif page == "🚨 Alertas" and st.session_state.user == "Policía":
             ui_alerts.render()
             st.info("Renderizando la página de Alertas (Sólo visible para Policía)...") # Placeholder
         else:
-            st.warning("Selecciona una opción en el menú lateral.")
+            # Esta condición solo debería alcanzarse si hay un error o un estado inesperado
+            st.warning(f"Error de navegación: No se encontró la página '{page}'.")
 
     except NameError as e:
-        st.error(f"⚠️ Error de módulo: {e}. Asegúrate de que todos los módulos (`ui_home`, etc.) estén disponibles.")
+        st.error(f"⚠️ Error de módulo: {e}. Asegúrate de que todos los módulos (`ui_home`, `ui_analysis`, etc.) estén disponibles en tu entorno.")
     except Exception as e:
         st.error(f"⚠️ Ocurrió un error al renderizar la página: {e}")
-        st.info("Revisa que la base de datos 'cdmx_insights.db' exista y que los módulos estén actualizados.")
+        st.info("Verifica que las funciones de renderizado dentro de tus módulos no contengan errores.")
 
 # --- Lógica de arranque (Control de flujo) ---
 if st.session_state.user is None:

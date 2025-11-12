@@ -2,8 +2,8 @@ import streamlit as st
 import os
 from pathlib import Path
 
-
 def render():
+    # Estilos CSS
     st.markdown("""
         <style>
         .team-grid {
@@ -67,34 +67,24 @@ def render():
     team = [
         {
             "name": "Damian Calderon Capallera",
-            "img": Path("/Users/dmart/OneDrive/Imágenes/Documentos/reto/planb/dashboard/damian.png"),
+            "img": Path("/Users/damcalde/RETO/planb/dashboard/damian.png"),
             "quote": "Forecasting crime risk helps allocate resources before spikes happen."
         },
         {
             "name": "Daniela Martínez Xolalpa",
-            "img": Path("/Users/dmart/OneDrive/Imágenes/Documentos/reto/planb/dashboard/dani.png"),
+            "img": Path("/Users/damcalde/RETO/planb/dashboard/dani.png"),
             "quote": "Space-time patterns reveal where prevention can be most effective."
         },
         {
             "name": "José de Jesús Rodríguez Rocha",
-            "img": Path("/Users/dmart/OneDrive/Imágenes/Documentos/reto/planb/dashboard/chuy.png"),
+            "img": Path("/Users/damcalde/RETO/planb/dashboard/chuy.png"),
             "quote": "From noise to narrative: modeling explains the ‘why’, not just the ‘what’."
         },
         {
             "name": "Fernando Vázquez Rivera",
-            "img": Path("/Users/dmart/OneDrive/Imágenes/Documentos/reto/planb/dashboard/fercho.png"),
+            "img": Path("/Users/damcalde/RETO/planb/dashboard/fercho.png"),
             "quote": "Responsible prediction means insight that informs action—never bias."
-        },
-        {
-            "name": "Luis Gallegos Pérez",
-            "img": Path("/Users/damcalde/RETO/planb/dashboard/luis.png"),  # Ruta local con Path
-            "quote": "Innovative solutions come from the ability to see patterns that others miss."
-        },
-        {
-            "name": "Alejandro Cortés",
-            "img": Path("/Users/damcalde/RETO/planb/dashboard/alejandro.png"),  # Ruta local con Path
-            "quote": "Transforming data into meaningful insights is key to strategic decision-making."
-        },
+        }
     ]
 
     # Mostrar información del equipo (Parte superior: 3 columnas)
@@ -109,9 +99,9 @@ def render():
             st.markdown(f"**{m['name']}**", unsafe_allow_html=True)
             st.markdown(f'<div class="quote">“{m["quote"]}”</div>', unsafe_allow_html=True)
 
-    st.write("")  # spacing
+    st.write("")  # Espacio entre secciones
 
-    # Mission
+    # Misión
     st.markdown('<div class="kicker">Nuestra misión</div>', unsafe_allow_html=True)
     st.markdown(
         """
@@ -127,9 +117,9 @@ def render():
         unsafe_allow_html=True
     )
 
-    st.write("")  # spacing
+    st.write("")  # Espacio entre secciones
 
-    # Goals
+    # Objetivos
     st.markdown('<div class="kicker">Nuestros objetivos</div>', unsafe_allow_html=True)
     st.markdown(
         """
@@ -140,4 +130,3 @@ def render():
         """,
         unsafe_allow_html=True
     )
-
