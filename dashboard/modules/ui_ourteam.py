@@ -1,4 +1,3 @@
-# ui_team.py
 import streamlit as st
 import os
 from pathlib import Path
@@ -7,12 +6,56 @@ from pathlib import Path
 def render():
     st.markdown("""
         <style>
-        .team-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px;margin-top:1rem}
-        .card{background:var(--background-color,#ffffff);border:1px solid rgba(0,0,0,.08);border-radius:16px;padding:14px;box-shadow:0 2px 8px rgba(0,0,0,.04);text-align:center}
-        .card img{width:120px;height:120px;object-fit:cover;border-radius:999px;display:block;margin:0 auto 10px;border:3px solid rgba(0,0,0,.06)}
-        .quote{font-size:.95rem;color:#374151;line-height:1.35;margin-top:8px}
-        .section{background:rgba(0,0,0,.02);border:1px solid rgba(0,0,0,.06);border-radius:16px;padding:16px}
-        .kicker{letter-spacing:.08em;text-transform:uppercase;font-weight:600;font-size:.8rem;color:#6b7280;margin-bottom:6px}
+        .team-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr); /* 3 columnas en la parte superior */
+            gap: 18px;
+            margin-top: 1rem;
+        }
+        .team-grid-bottom {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr); /* 2 columnas en la parte inferior */
+            gap: 18px;
+        }
+        .card {
+            background: var(--background-color, #ffffff);
+            border: 1px solid rgba(0,0,0,.08);
+            border-radius: 16px;
+            padding: 14px;
+            box-shadow: 0 2px 8px rgba(0,0,0,.04);
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        .quote {
+            font-size: .95rem;
+            color: #374151;
+            line-height: 1.35;
+            margin-top: 8px;
+        }
+        .section {
+            background: rgba(0, 0, 0, .02);
+            border: 1px solid rgba(0, 0, 0, .06);
+            border-radius: 16px;
+            padding: 16px;
+        }
+        .kicker {
+            letter-spacing: .08em;
+            text-transform: uppercase;
+            font-weight: 600;
+            font-size: .8rem;
+            color: #6b7280;
+            margin-bottom: 6px;
+        }
+        .card img {
+            width: 80%; /* Hacemos la imagen más pequeña */
+            height: auto; /* Ajustamos la altura automáticamente */
+            object-fit: cover;
+            border-radius: 999px;
+            margin-bottom: 10px;
+        }
         </style>
     """, unsafe_allow_html=True)
 
@@ -42,9 +85,19 @@ def render():
             "img": Path("/Users/dmart/OneDrive/Imágenes/Documentos/reto/planb/dashboard/fercho.png"),
             "quote": "Responsible prediction means insight that informs action—never bias."
         },
+        {
+            "name": "Luis Gallegos Pérez",
+            "img": Path("/Users/damcalde/RETO/planb/dashboard/luis.png"),  # Ruta local con Path
+            "quote": "Innovative solutions come from the ability to see patterns that others miss."
+        },
+        {
+            "name": "Alejandro Cortés",
+            "img": Path("/Users/damcalde/RETO/planb/dashboard/alejandro.png"),  # Ruta local con Path
+            "quote": "Transforming data into meaningful insights is key to strategic decision-making."
+        },
     ]
 
-    # Team grid
+    # Mostrar información del equipo (Parte superior: 3 columnas)
     st.markdown('<div class="kicker">Team</div>', unsafe_allow_html=True)
     cols = st.columns(len(team))
     for idx, m in enumerate(team):
@@ -87,3 +140,4 @@ def render():
         """,
         unsafe_allow_html=True
     )
+
