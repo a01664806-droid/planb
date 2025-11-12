@@ -1,6 +1,16 @@
 import streamlit as st
 # Importa tus módulos de renderizado, se asume que existen:
-from modules import ui_home, ui_analysis, ui_map, ui_info, ui_ourteam, ui_alerts
+# En app.py
+from modules import ui_home, ui_analysis, ui_info, ui_ourteam, ui_alerts,ui_map  # Importar desde el paquete modules
+from modules.ui_map import preprocess_inputs_mapa_v3  # Importa la función desde ui_map en modules
+# En app.py
+from modules.ui_home import *  # Importar todos los elementos de ui_home
+from modules.ui_analysis import *  # Importar todos los elementos de ui_analysis
+from modules.ui_map import *  # Importar todos los elementos de ui_map
+from modules.ui_info import *  # Importar todos los elementos de ui_info
+from modules.ui_ourteam import *  # Importar todos los elementos de ui_ourteam
+from modules.ui_alerts import *  # Importar todos los elementos de ui_alerts
+
 # Si estos módulos no existen, el código fallará al intentar llamarlos.
 
 # --- Configuración de página (debe ir antes de cualquier render) ---
