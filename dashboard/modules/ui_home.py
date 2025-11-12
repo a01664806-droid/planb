@@ -1,13 +1,29 @@
 import streamlit as st
 from pathlib import Path
 import urllib.request
+import os # Añadido para consistencia con Path
+
+# --- FUNCIÓN AUXILIAR PARA RUTAS RELATIVAS ---
+def get_absolute_path(relative_path: str) -> Path:
+    """
+    Construye una ruta absoluta basándose en la ubicación del archivo app.py
+    y la carpeta 'images' en la raíz del proyecto.
+    """
+    # 1. Obtiene la ruta al directorio actual del módulo (modules)
+    MODULE_DIR = Path(__file__).parent
+    
+    # 2. Sube un nivel para llegar a la raíz del proyecto (donde está app.py)
+    ROOT_DIR = MODULE_DIR.parent
+    
+    # 3. Une la ruta raíz con la ruta relativa específica (ej: images/captura-sabiasque.png)
+    return ROOT_DIR / relative_path
 
 def render():
     st.set_page_config(page_title="CDMX: From Incidents to Insights", layout="wide")
 
 
     # ======================
-    # Estilos globales
+    # Estilos globales (Sin cambios)
     # ======================
     st.markdown(
         """
@@ -101,14 +117,15 @@ def render():
         st.container()
         st.subheader("Sabías que...? 🇲🇽")
         
-        # Ruta de la imagen local
-        img_path_sabiasque = Path("/Users/damcalde/RETO/planb/dashboard/Captura de pantalla 2025-11-11 a la(s) 7.12.55 p.m..png")
+        # --- RUTA ADAPTADA (1) ---
+        # Asume que la imagen se llama 'captura-sabiasque.png' en la carpeta 'images/'
+        img_path_sabiasque = get_absolute_path("images/captura-sabiasque.png")
         
         # Verificar si la imagen existe antes de cargarla
         if img_path_sabiasque.exists():
             st.image(img_path_sabiasque, caption="Datos interesantes sobre CDMX", use_container_width=True)
         else:
-            st.warning("No se encontró la imagen local.")
+            st.warning(f"❌ Imagen no encontrada. Asegúrate de que '{img_path_sabiasque.name}' esté en la carpeta 'images' en la raíz de tu proyecto.")
         
         st.info("En la Ciudad de México se denuncian aproximadamente 26 delitos por hora, lo que equivale a alrededor de 624 delitos al día. Esta cifra incluye más de cien tipos de delitos, desde robos y fraudes hasta violencia familiar y sexual. Aunque los homicidios y robos han disminuido en los últimos años, otros delitos como violencia familiar y amenazas han aumentado, por lo que el ritmo general de denuncias se mantiene alto.**.")
 
@@ -124,14 +141,15 @@ def render():
             """
         )
         
-        # Ruta de la imagen local
-        img_path = Path("/Users/damcalde/RETO/planb/dashboard/CDMX IMAGEN INICIAL.jpg")
+        # --- RUTA ADAPTADA (2) ---
+        # Asume que la imagen se llama 'cdmx-inicial.jpg' en la carpeta 'images/'
+        img_path_cdmx = get_absolute_path("images/cdmx-inicial.jpg")
         
         # Verificar si la imagen existe antes de cargarla
-        if img_path.exists():
-            st.image(img_path, caption="Palacio de Bellas Artes, tomada por: Fernanda hernandez.", use_container_width=True)
+        if img_path_cdmx.exists():
+            st.image(img_path_cdmx, caption="Palacio de Bellas Artes, tomada por: Fernanda hernandez.", use_container_width=True)
         else:
-            st.warning("No se encontró la imagen local, utilizando la remota.")
+            st.warning(f"❌ Imagen no encontrada. Asegúrate de que '{img_path_cdmx.name}' esté en la carpeta 'images' en la raíz de tu proyecto. Usando imagen remota como fallback.")
             cdmx_img_url = "https://upload.wikimedia.org/wikipedia/commons/8/8b/Mexico_City_Reforma_skyline.jpg"
             st.image(cdmx_img_url, caption="Skyline — Paseo de la Reforma (CC BY-SA 4.0, Jonathan Salvador)", use_container_width=True)
 
@@ -140,7 +158,7 @@ def render():
     # Fila 2 (dos columnas)
     colC, colD = st.columns(2)
 
-    # (3) Abajo-izquierda: Público objetivo + Contenido
+    # (3) Abajo-izquierda: Público objetivo + Contenido (Sin cambios)
     with colC:
         st.subheader("¿Cual es el objetivo?")
         st.markdown(
@@ -157,7 +175,7 @@ def render():
             unsafe_allow_html=True,
         )
 
-    # (4) Abajo-derecha: ¿Qué podrás encontrar aquí?
+    # (4) Abajo-derecha: ¿Qué podrás encontrar aquí? (Sin cambios)
     with colD:
         st.markdown("<h3 class='section-title'>¿Qué podrás encontrar aquí?</h3>", unsafe_allow_html=True)
         st.markdown(
@@ -186,7 +204,7 @@ def render():
     st.divider()
 
     # ======================
-    # Footer
+    # Footer (Sin cambios)
     # ======================
     st.caption(
         "This platform combines machine learning, geospatial analysis, and open data to support data-driven safety strategies."

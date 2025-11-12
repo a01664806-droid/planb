@@ -2,8 +2,23 @@ import streamlit as st
 import os
 from pathlib import Path
 
+# --- FUNCIÓN AUXILIAR PARA RUTAS RELATIVAS ---
+def get_absolute_path(relative_path: str) -> Path:
+    """
+    Construye una ruta absoluta basándose en la ubicación del archivo app.py
+    y la carpeta 'images' en la raíz del proyecto.
+    """
+    # 1. Obtiene la ruta al directorio actual del módulo (modules)
+    MODULE_DIR = Path(__file__).parent
+    
+    # 2. Sube un nivel para llegar a la raíz del proyecto (donde está app.py)
+    ROOT_DIR = MODULE_DIR.parent
+    
+    # 3. Une la ruta raíz con la ruta relativa específica (ej: images/damian.png)
+    return ROOT_DIR / relative_path
+
 def render():
-    # Estilos CSS
+    # Estilos CSS (Se mantienen sin cambios)
     st.markdown("""
         <style>
         .team-grid {
@@ -63,26 +78,27 @@ def render():
     st.title("Nuestro Equipo")
     st.write("Conoce a las personas detrás de nuestro equipo y descubre nuestra misión y los objetivos que guían todo lo que hacemos")
 
-    # Team data
+    # --- LÓGICA DE RUTAS ADAPTADA ---
+    # Ahora las rutas son relativas a la carpeta 'images/' en la raíz del proyecto
     team = [
         {
             "name": "Damian Calderon Capallera",
-            "img": Path("/Users/damcalde/RETO/planb/dashboard/damian.png"),
+            "img_path": get_absolute_path("images/damian.png"), # <- Ruta relativa a la carpeta images/
             "quote": "Forecasting crime risk helps allocate resources before spikes happen."
         },
         {
             "name": "Daniela Martínez Xolalpa",
-            "img": Path("/Users/damcalde/RETO/planb/dashboard/dani.png"),
+            "img_path": get_absolute_path("images/dani.png"), # <- Ruta relativa a la carpeta images/
             "quote": "Space-time patterns reveal where prevention can be most effective."
         },
         {
             "name": "José de Jesús Rodríguez Rocha",
-            "img": Path("/Users/damcalde/RETO/planb/dashboard/chuy.png"),
+            "img_path": get_absolute_path("images/chuy.png"), # <- Ruta relativa a la carpeta images/
             "quote": "From noise to narrative: modeling explains the ‘why’, not just the ‘what’."
         },
         {
             "name": "Fernando Vázquez Rivera",
-            "img": Path("/Users/damcalde/RETO/planb/dashboard/fercho.png"),
+            "img_path": get_absolute_path("images/fercho.png"), # <- Ruta relativa a la carpeta images/
             "quote": "Responsible prediction means insight that informs action—never bias."
         }
     ]
@@ -92,16 +108,21 @@ def render():
     cols = st.columns(len(team))
     for idx, m in enumerate(team):
         with cols[idx]:
-            if os.path.exists(m["img"]):
-                st.image(m["img"], width=120)
+            # Usamos m["img_path"] y comprobamos si existe
+            if m["img_path"].exists():
+                # st.image acepta un objeto Path o un string
+                st.image(m["img_path"], width=120)
             else:
-                st.warning(f"Image not found: {m['img']}")
+                # Mensaje de error para facilitar la depuración
+                st.warning(f"❌ Imagen no encontrada. Asegúrate de que '{m['img_path'].name}' esté en la carpeta 'images' en la raíz de tu proyecto.")
+                st.info(f"Ruta intentada: {m['img_path']}")
+                
             st.markdown(f"**{m['name']}**", unsafe_allow_html=True)
             st.markdown(f'<div class="quote">“{m["quote"]}”</div>', unsafe_allow_html=True)
 
     st.write("")  # Espacio entre secciones
 
-    # Misión
+    # Misión (Se mantiene sin cambios)
     st.markdown('<div class="kicker">Nuestra misión</div>', unsafe_allow_html=True)
     st.markdown(
         """
@@ -119,7 +140,7 @@ def render():
 
     st.write("")  # Espacio entre secciones
 
-    # Objetivos
+    # Objetivos (Se mantiene sin cambios)
     st.markdown('<div class="kicker">Nuestros objetivos</div>', unsafe_allow_html=True)
     st.markdown(
         """
