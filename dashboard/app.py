@@ -14,8 +14,8 @@ st.set_page_config(
 # Constantes de configuración
 PASSWORD_POLICIA = "policia"
 # Opciones de navegación para cada usuario
-PAGES_POLICIA = ["🏠 Home", "📊 Analysis", "🗺️ Map", "ℹ️ Info", "👥 Our Team", "🚨 Alertas"]
-PAGES_THALES = ["🏠 Home", "📊 Analysis", "🗺️ Map", "ℹ️ Info", "👥 Our Team"] # Sin "🚨 Alertas"
+PAGES_POLICIA = ["Inicio", "Análisis", "Mapa", "Información", "¿Quiénes Somos?", "Alertas"]
+PAGES_THALES = ["Inicio", "Análisis", "Mapa", "Información", "¿Quiénes Somos?"] # Sin "🚨 Alertas"
 
 # Inicializar o asegurar el estado de la sesión
 if 'user' not in st.session_state:
@@ -88,7 +88,7 @@ def render_selection_page():
 # --- Función principal de la aplicación ---
 def render_main_dashboard():
     # 1. Configuración del Sidebar (Navegación y Logout)
-    st.sidebar.title("🔎 Navegación")
+    st.sidebar.title("Navegación")
     
     # Seleccionar las páginas disponibles según el usuario
     if st.session_state.user == "Policía":
@@ -118,24 +118,18 @@ def render_main_dashboard():
         # CORRECCIÓN: Los nombres de las páginas deben coincidir exactamente con los elementos de la lista PAGES_...
         # Si tienes tus módulos instalados, DESCOMENTA las líneas de llamada (e.g., ui_home.render())
 
-        if page == "🏠 Home":
+        if page == "Inicio":
             ui_home.render()
-            st.info("Renderizando la página Home...") # Placeholder
-        elif page == "📊 Analysis":
+        elif page == "Análisis":
             ui_analysis.render()
-            st.info("Renderizando la página de Análisis...") # Placeholder
-        elif page == "🗺️ Map":
+        elif page == "Mapa":
             ui_map.render()
-            st.info("Renderizando la página de Mapas...") # Placeholder
-        elif page == "ℹ️ Info":
+        elif page == "Información":
             ui_info.render()
-            st.info("Renderizando la página de Información...") # Placeholder
-        elif page == "👥 Our Team":
+        elif page == "¿Quiénes Somos?":
             ui_ourteam.render()
-            st.info("Renderizando la página Nuestro Equipo...") # Placeholder
-        elif page == "🚨 Alertas" and st.session_state.user == "Policía":
+        elif page == "Alertas" and st.session_state.user == "Policía":
             ui_alerts.render()
-            st.info("Renderizando la página de Alertas (Sólo visible para Policía)...") # Placeholder
         else:
             # Esta condición solo debería alcanzarse si hay un error o un estado inesperado
             st.warning(f"Error de navegación: No se encontró la página '{page}'.")
