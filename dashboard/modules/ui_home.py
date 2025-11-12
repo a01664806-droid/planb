@@ -5,35 +5,6 @@ import urllib.request
 def render():
     st.set_page_config(page_title="CDMX: From Incidents to Insights", layout="wide")
 
-    # ======================
-    # Configuración de imagen
-    # ======================
-    # Cambia a False si quieres cargar local (assets/)
-    USE_REMOTE = True
-
-    # (A) Remoto: foto libre (Wikimedia)
-    cdmx_img_url = "https://upload.wikimedia.org/wikipedia/commons/8/8b/Mexico_City_Reforma_skyline.jpg"
-
-    # (B) Local: coloca tus archivos en ./assets/
-    # - Recomendado: tener PNG/JPG como fallback si tu archivo principal es AVIF.
-    local_assets = Path("assets")
-    local_assets.mkdir(exist_ok=True)
-
-    # Pon aquí tus nombres reales:
-    local_img_avif = local_assets / "dashboard/CDMX IMAGEN INICIAL.jpg"   # tu archivo
-    local_img_fallback = local_assets / "dashboard/CDMX IMAGEN INICIAL.jpg"    # fallback recomendado
-
-    # Si seleccionas remoto=False y no existe fallback, intento descargar la imagen de ejemplo
-    if not USE_REMOTE and not (local_img_avif.exists() or local_img_fallback.exists()):
-        try:
-            example_path = local_assets / "cdmx_reforma.jpg"
-            if not example_path.exists():
-                urllib.request.urlretrieve(cdmx_img_url, example_path)
-            # usamos este como fallback
-            local_img_fallback = example_path
-        except Exception as e:
-            st.warning(f"No pude preparar imagen local: {e}. Usaré URL remota.")
-            USE_REMOTE = True
 
     # ======================
     # Estilos globales
@@ -71,6 +42,35 @@ def render():
         .no-top-margin h3, .no-top-margin h2 {
             margin-top: 0.2rem;
         }
+        
+        /* Estilo para el objetivo */
+        .objective-list {
+            list-style-type: disc;
+            margin-left: 20px;
+            color: #C9D1D9;
+            font-size: 16px;
+        }
+
+        .section-title {
+            font-size: 1.5rem;
+            color: #E5E7EB;
+            font-weight: 600;
+        }
+
+        .section-description {
+            color: #E5E7EB;
+            font-size: 1rem;
+            line-height: 1.6;
+            margin-bottom: 1rem;
+        }
+
+        .quick-nav-list {
+            list-style-type: square;
+            margin-left: 20px;
+            color: #E5E7EB;
+            font-size: 1rem;
+        }
+
         </style>
         """,
         unsafe_allow_html=True,
@@ -99,33 +99,41 @@ def render():
     # (1) Arriba-izquierda: "Did you know?"
     with colA:
         st.container()
-        st.subheader("💡 Did you know?")
+        st.subheader("Sabías que...? 🇲🇽")
+        
+        # Ruta de la imagen local
+        img_path_sabiasque = Path("/Users/fernandovazquezrivera/OPERACIONCONTINGENCIA/planb/dashboard/Captura de pantalla 2025-11-11 a la(s) 7.12.55 p.m..png")
+        
+        # Verificar si la imagen existe antes de cargarla
+        if img_path_sabiasque.exists():
+            st.image(img_path_sabiasque, caption="Datos interesantes sobre CDMX", use_container_width=True)
+        else:
+            st.warning("No se encontró la imagen local.")
+        
         st.info("En la Ciudad de México se denuncian aproximadamente 26 delitos por hora, lo que equivale a alrededor de 624 delitos al día. Esta cifra incluye más de cien tipos de delitos, desde robos y fraudes hasta violencia familiar y sexual. Aunque los homicidios y robos han disminuido en los últimos años, otros delitos como violencia familiar y amenazas han aumentado, por lo que el ritmo general de denuncias se mantiene alto.**.")
 
-    # (2) Arriba-derecha: Imagen
+    # (2) Arriba-derecha: Información de la Ciudad de México
     with colB:
-        st.markdown("### 🌆 Mexico City", help="Skyline — Paseo de la Reforma")
-        if USE_REMOTE:
-            st.image(
-                cdmx_img_url,
-                caption="Skyline — Paseo de la Reforma (CC BY-SA 4.0, Jonathan Salvador)",
-                use_container_width=True,
-            )
+        # Información sobre la CDMX (población, movilidad, etc.)
+        st.markdown("### 📊 Datos sobre la Ciudad de México", help="Información relevante sobre CDMX")
+        st.markdown(
+            """
+            La Ciudad de México, con una población de más de 9 millones de habitantes, es una de las metrópolis más grandes y densamente pobladas del mundo. 
+            A diario, más de 5 millones de personas se desplazan por su sistema de transporte público, incluyendo el metro, autobuses y microbuses, 
+            convirtiéndola en una de las ciudades con mayor movilidad en el planeta.
+            """
+        )
+        
+        # Ruta de la imagen local
+        img_path = Path("/Users/fernandovazquezrivera/OPERACIONCONTINGENCIA/planb/dashboard/CDMX IMAGEN INICIAL.jpg")
+        
+        # Verificar si la imagen existe antes de cargarla
+        if img_path.exists():
+            st.image(img_path, caption="Palacio de Bellas Artes, tomada por: Fernanda hernandez.", use_container_width=True)
         else:
-            # Intento: mostrar AVIF si existe; si no, fallback
-            if local_img_avif.exists():
-                try:
-                    # AVIF no siempre es soportado por Streamlit; si falla, mostramos fallback
-                    st.image(str(local_img_avif), use_container_width=True, caption="CDMX (AVIF)")
-                except Exception:
-                    if local_img_fallback.exists():
-                        st.image(str(local_img_fallback), use_container_width=True, caption="CDMX (fallback)")
-                    else:
-                        st.warning("No pude mostrar AVIF y no encontré fallback PNG/JPG.")
-            elif local_img_fallback.exists():
-                st.image(str(local_img_fallback), use_container_width=True, caption="CDMX (fallback)")
-            else:
-                st.warning("No hay imagen local disponible.")
+            st.warning("No se encontró la imagen local, utilizando la remota.")
+            cdmx_img_url = "https://upload.wikimedia.org/wikipedia/commons/8/8b/Mexico_City_Reforma_skyline.jpg"
+            st.image(cdmx_img_url, caption="Skyline — Paseo de la Reforma (CC BY-SA 4.0, Jonathan Salvador)", use_container_width=True)
 
     st.divider()
 
@@ -134,32 +142,45 @@ def render():
 
     # (3) Abajo-izquierda: Público objetivo + Contenido
     with colC:
-        st.subheader("🧭 For the public")
+        st.subheader("¿Cual es el objetivo?")
         st.markdown(
             """
-            Our goal is to **help you feel safer** by turning complex data into clear, actionable insights:
-
-            - Plain-language explanations and friendly visuals.  
-            - Borough- and station-level context to orient decisions.  
-            - Transparent methods and sources (no black boxes).  
-            - Practical tips tied to patterns in time and place.
-            """
+            El objetivo es ayudarte a sentirte más seguro transformando datos complejos en información práctica y accesible.
+            
+            <ul class="objective-list">
+                <li>Explicaciones en lenguaje sencillo y visuales amigables.</li>
+                <li>Contexto a nivel de alcaldías y estaciones para orientar las decisiones.</li>
+                <li>Métodos y fuentes transparentes.</li>
+                <li>Consejos prácticos vinculados a patrones en el tiempo y el lugar.</li>
+            </ul>
+            """,
+            unsafe_allow_html=True,
         )
 
-    # (4) Abajo-derecha: What's inside
+    # (4) Abajo-derecha: ¿Qué podrás encontrar aquí?
     with colD:
-        st.subheader("📦 What's inside")
+        st.markdown("<h3 class='section-title'>¿Qué podrás encontrar aquí?</h3>", unsafe_allow_html=True)
         st.markdown(
             """
-            - **🗺️ Map** — Explore density, clusters, and layers.  
-            - **📊 Info (EDA)** — Trends by year, month, hour, and borough.  
-            - **🤖 Predictive Models** — Station/time risk signals.  
-            - **👥 Our Team** — Mission, people, and values.
+            <p class="section-description">
+            - 🗺️ Mapa — Explora la densidad, los clústeres y las capas.<br>
+            - 📊 Info (EDA) — Tendencias por año, mes, hora y alcaldía.<br>
+            - 🤖 Modelos Predictivos — Señales de riesgo por estación/tiempo.<br>
+            - 👥 Nuestro Equipo — Misión, personas y valores.
+            </p>
+            """,
+            unsafe_allow_html=True,
+        )
 
-            **Quick navigation**  
-            - Map uses `alcaldias.geojson` or `alcaldias2.geojson`.  
-            - Info (EDA) uses `carpetasFGJ_acumulado_2025_01.csv`.
+        st.markdown("<h4 class='section-title'>Navegación rápida</h4>", unsafe_allow_html=True)
+        st.markdown(
             """
+            <ul class="quick-nav-list">
+                <li>El mapa utiliza `alcaldias.geojson` o `alcaldias2.geojson`.</li>
+                <li>Info (EDA) utiliza `carpetasFGJ_acumulado_2025_01.csv`.</li>
+            </ul>
+            """,
+            unsafe_allow_html=True,
         )
 
     st.divider()
