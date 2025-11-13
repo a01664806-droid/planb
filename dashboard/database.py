@@ -306,3 +306,22 @@ def get_alcaldia_distribution(limit=10):
     LIMIT {limit}
     """
     return run_query(query)
+
+@st.cache_data
+def get_map_data_by_date(anio, mes):
+    """
+    Obtiene datos de lat/lon para el mapa, filtrados por año y mes.
+    """
+    query = """
+    SELECT 
+        latitud, 
+        longitud 
+    FROM 
+        crimes 
+    WHERE 
+        anio_hecho = ? AND mes_hecho = ? 
+        AND latitud IS NOT NULL AND longitud IS NOT NULL
+    LIMIT 50000 -- Limita a 50k puntos para que Pydeck sea rápido
+    """
+    params = [anio, mes]
+    return run_query(query, params)

@@ -1,245 +1,423 @@
-# modules/ui_map.py
+# modules/ui_map_predictivo.py
 
 import streamlit as st
 import pandas as pd
-import numpy as np
-import joblib
-# Asegúrate de que este módulo 'database' esté accesible.
-# Si no está en el mismo directorio, ajusta el import (ej: from . import database)
-import database  
-import pydeck as pdk
 import json
-from datetime import datetime
 from pathlib import Path
 
-# --- 1. Carga de Modelos y Datos (V3) ---
-@st.cache_resource
-def load_models_and_data():
-    """
-    Carga todos los modelos (XGB v3, KMeans) y datos (Clusters, GeoJSON) necesarios.
-    """
-    # Define la ruta base para los archivos estáticos. 
-    # Es crucial que estas rutas sean correctas en el entorno de ejecución.
-    BASE_PATH = Path(__file__).parent.parent 
-    
-    try:
-        model = joblib.load(BASE_PATH / 'violence_xgb_optimizado_v3.joblib') # Carga el modelo V3
-    except FileNotFoundError:
-        st.error("Error: 'violence_xgb_optimizado_v3.joblib' no encontrado. Asegúrate de que esté en el directorio raíz.")
-        model = None
-    
-    try:
-        kmeans = joblib.load(BASE_PATH / 'kmeans_zonas.joblib')
-    except FileNotFoundError:
-        st.error("Error: 'kmeans_zonas.joblib' no encontrado. Asegúrate de que esté en el directorio raíz.")
-        kmeans = None
-    
-    try:
-        df_clusters = pd.read_csv(BASE_PATH / 'cluster_info.csv')
-    except FileNotFoundError:
-        st.error("Error: 'cluster_info.csv' no encontrado. Ejecuta 'crear_cluster_info.py' primero.")
-        df_clusters = None
-    
-    # Ruta al archivo GeoJSON
-    GEOJSON_PATH = BASE_PATH / "alcaldias.geojson"
-    try:
-        with open(GEOJSON_PATH, 'r', encoding='utf-8') as f:
-            geojson_data = json.load(f)
-    except FileNotFoundError:
-        st.error(f"Error: No se encontró 'alcaldias.geojson'. Se buscó en: {GEOJSON_PATH}")
-        geojson_data = None
-            
-    # Asume que 'database' está importado y es funcional
-    try:
-        df_alcaldias = database.get_all_alcaldias()
-        df_categorias = database.get_all_crime_categories()
-    except Exception as e:
-        st.error(f"Error al cargar datos de la base de datos: {e}")
-        df_alcaldias = pd.DataFrame()
-        df_categorias = pd.DataFrame()
-    
-    return model, kmeans, df_clusters, df_alcaldias, df_categorias, geojson_data
+import folium
+from folium.plugins import HeatMap, MarkerCluster # <-- IMPORTANTE: Agregar MarkerCluster
+from streamlit_folium import st_folium
+import duckdb
 
-# --- 2. Funciones de Preprocessing (V3) ---
-def map_to_time_slot(hour):
-    """Convierte una hora (0-23) en una franja horaria categórica."""
-    if 0 <= hour <= 5: return 'Madrugada'
-    elif 6 <= hour <= 11: return 'Mañana'
-    elif 12 <= hour <= 18: return 'Tarde'
-    return 'Noche' # 19-23
+# =========================
+# RUTAS / CONSTANTES
+# =========================
+BASE_DIR = Path(__file__).resolve().parent.parent
+DB_PATH = BASE_DIR / "cdmx_insights.db"
+CLUSTER_PATH = BASE_DIR / "cluster_info.csv"
+COLONIAS_GEOJSON = BASE_DIR / "coloniascdmx.geojson"
+ALCALDIAS_GEOJSON = BASE_DIR / "alcaldias.geojson"
 
-def preprocess_inputs_mapa_v3(fecha, hora, lat, lon, alcaldia, categoria, kmeans_model):
+CDMX_CENTER = [19.4326, -99.1332]
+
+
+# =========================
+# LOADERS CACHEADOS
+# =========================
+@st.cache_data
+def get_filter_options():
     """
-    Toma los inputs crudos y los transforma para el pipeline V3 (con zona_hora).
+    Obtiene los valores únicos para los filtros desde la base de datos
+    y los cachea en la sesión del usuario para una carga más rápida.
     """
-    fecha_dt = pd.to_datetime(fecha)
-    dia_de_la_semana = fecha_dt.dayofweek
-    es_fin_de_semana = int(dia_de_la_semana >= 5)
-    mes = fecha_dt.month
-    dia_del_mes = fecha_dt.day
-    es_quincena = int(dia_del_mes in [14,15,16, 28,29,30,31,1,2])
+    # 🔑 OPTIMIZACIÓN: Cachear en la sesión del usuario
+    if 'filter_options' in st.session_state:
+        return st.session_state.filter_options
+
+    con = duckdb.connect(str(DB_PATH), read_only=True)
+    try:
+        years = con.execute("SELECT DISTINCT anio_inicio FROM crimes ORDER BY anio_inicio DESC").df()['anio_inicio'].tolist()
+        v_opts = con.execute("SELECT DISTINCT violence_type FROM crimes ORDER BY violence_type").df()['violence_type'].tolist()
+        d_opts = con.execute("SELECT DISTINCT delito FROM crimes ORDER BY delito").df()['delito'].tolist()
+        a_opts = con.execute("SELECT DISTINCT alcaldia_hecho FROM crimes ORDER BY alcaldia_hecho").df()['alcaldia_hecho'].tolist()
+        min_hora, max_hora = con.execute("SELECT MIN(hour(hora_hecho)), MAX(hour(hora_hecho)) FROM crimes").fetchone()
+    finally:
+        con.close()
     
-    coords = pd.DataFrame({'latitud': [lat], 'longitud': [lon]})
-    zona_cluster = kmeans_model.predict(coords)[0]
+    filter_options = (years, v_opts, d_opts, a_opts, min_hora, max_hora)
+    st.session_state.filter_options = filter_options
     
-    franja_horaria = map_to_time_slot(hora)
-    zona_hora = f"{zona_cluster}_{franja_horaria}" 
-    mes_sin = np.sin(2 * np.pi * mes / 12)
-    mes_cos = np.cos(2 * np.pi * mes / 12)
+    return filter_options
+
+@st.cache_data
+def load_crime_points(filters):
+    """
+    Carga puntos de crimen desde DuckDB con filtros dinámicos.
+    """
+    base_query = """
+        SELECT
+            latitud,
+            longitud,
+            delito,
+            violence_type AS violence,
+            fecha_hecho,
+            anio_inicio AS anio,
+            mes_inicio AS mes,
+            hour(hora_hecho) AS hora,
+            alcaldia_hecho AS alcaldia,
+            colonia_hecho AS colonia
+        FROM crimes
+    """
     
-    input_data = {
-        'alcaldia_hecho': [alcaldia],
-        'categoria_delito': [categoria],
-        'dia_de_la_semana': [dia_de_la_semana],
-        'es_fin_de_semana': [es_fin_de_semana],
-        'es_quincena': [es_quincena],
-        'zona_hora': [zona_hora], 
-        'mes_sin': [mes_sin], 
-        'mes_cos': [mes_cos],
-        'latitud': [lat], 'longitud': [lon], 'hora_hecho': [hora], 'mes_hecho': [mes],
-        'zona_cluster': [zona_cluster], 'franja_horaria': [franja_horaria] 
+    where_clauses = ["latitud IS NOT NULL", "longitud IS NOT NULL"]
+    params = []
+
+    if filters["years"]:
+        where_clauses.append(f"anio_inicio IN ({','.join(['?']*len(filters['years']))})")
+        params.extend(filters["years"])
+
+    if filters["violence"]:
+        where_clauses.append(f"violence_type IN ({','.join(['?']*len(filters['violence']))})")
+        params.extend(filters["violence"])
+
+    if filters["delitos"]:
+        where_clauses.append(f"delito IN ({','.join(['?']*len(filters['delitos']))})")
+        params.extend(filters["delitos"])
+
+    if filters["alcaldias"]:
+        where_clauses.append(f"alcaldia_hecho IN ({','.join(['?']*len(filters['alcaldias']))})")
+        params.extend(filters["alcaldias"])
+
+    if filters["hour_range"]:
+        where_clauses.append("hour(hora_hecho) BETWEEN ? AND ?")
+        params.extend(filters["hour_range"])
+
+    if where_clauses:
+        query = f"{base_query} WHERE {' AND '.join(where_clauses)}"
+    else:
+        query = base_query
+
+    con = duckdb.connect(str(DB_PATH), read_only=True)
+    try:
+        df = con.execute(query, params).df()
+    finally:
+        con.close()
+    
+    return df
+
+
+@st.cache_data
+def load_cluster_info():
+    if not CLUSTER_PATH.exists():
+        return pd.DataFrame()
+    return pd.read_csv(CLUSTER_PATH)
+
+
+@st.cache_data
+def load_geojson(path: Path):
+    if not path.exists():
+        return None
+    with open(path, "r", encoding="utf-8") as f:
+        gj = json.load(f)
+    return gj
+
+
+# =========================
+# FILTROS
+# =========================
+def apply_filters(years, v_opts, d_opts, a_opts, min_hora, max_hora):
+    st.sidebar.markdown("### 🔎 Filtros del mapa")
+
+    # 🔑 OPTIMIZACIÓN: Cargar el año más reciente por defecto
+    default_year = [years[0]] if years else []
+    year_sel = st.sidebar.multiselect("Año", years, default=default_year)
+    
+    v_sel = st.sidebar.multiselect("Tipo de violencia", v_opts, default=[])
+    delito_sel = st.sidebar.multiselect("Delito", d_opts, default=[])
+    alcaldia_sel = st.sidebar.multiselect("Alcaldía", a_opts, default=[])
+    h_range = st.sidebar.slider("Hora del día", min_value=min_hora, max_value=max_hora, value=(min_hora, max_hora))
+
+    return {
+        "years": year_sel,
+        "violence": v_sel,
+        "delitos": delito_sel,
+        "alcaldias": alcaldia_sel,
+        "hour_range": h_range,
     }
+
+
+# =========================
+# CAPA 1: PUNTOS ("DROPS") - OPTIMIZADA con MarkerCluster
+# =========================
+def build_points_map(df: pd.DataFrame):
+    m = folium.Map(
+        location=CDMX_CENTER,
+        zoom_start=11,
+        tiles="CartoDB positron",
+        control_scale=True,
+    )
     
-    input_df = pd.DataFrame(input_data)
-    
-    return input_df
+    # 🔑 OPTIMIZACIÓN: Inicializar MarkerCluster
+    mc = MarkerCluster().add_to(m)
 
-# --- Función de Ayuda para Color ---
-def get_color_from_probability(prob):
-    """Genera un color RGB basado en la probabilidad (Verde a Rojo)."""
-    if prob < 0.75:
-        # De Verde (0.65) a Amarillo (0.75)
-        g = 255
-        # Mapea prob de [0.65, 0.75] a [0, 255]
-        r = int(255 * ((prob - 0.65) / 0.10)) if prob >= 0.65 else 0
-        return [r, g, 0, 180]
-    elif prob < 0.85:
-        # De Amarillo (0.75) a Rojo (0.85)
-        r = 255
-        # Mapea prob de [0.75, 0.85] a [255, 0] para el componente G
-        g = int(255 * (1 - ((prob - 0.75) / 0.10)))
-        return [r, g, 0, 200]
-    else:
-        # Rojo (>= 0.85)
-        return [255, 0, 0, 220]
-
-
-def render():
+    # Leyenda manual simple
+    legend_html = """
+    <div style="
+        position: fixed;
+        bottom: 30px;
+        left: 30px;
+        z-index: 9999;
+        background-color: white;
+        padding: 10px 14px;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,.25);
+        font-size: 13px;">
+        <b>Leyenda</b><br>
+        <span style="color:#d73027;font-size:18px;">●</span> Violento<br>
+        <span style="color:#1a759f;font-size:18px;">●</span> No violento
+    </div>
     """
-    Función principal de renderizado para el módulo del Mapa Interactivo.
-    """
-    st.markdown("---")
-    st.title("🗺️ Mapa Interactivo de Incidencia Delictiva")
-    
-    # --- Cargar todos los modelos y datos ---
-    model_xgb, model_kmeans, df_clusters, df_alcaldias, df_categorias, geojson_data = load_models_and_data()
+    m.get_root().html.add_child(folium.Element(legend_html))
 
-    # --- Bloque de Validación ---
-    if model_xgb is None or \
-       model_kmeans is None or \
-       df_clusters is None or \
-       df_alcaldias.empty or \
-       df_categorias.empty or \
-       geojson_data is None:
+    # Usamos iterrows, pero agregamos al cluster
+    for _, row in df.iterrows():
+        lat = row["latitud"]
+        lon = row["longitud"]
+        if pd.isna(lat) or pd.isna(lon):
+            continue
+
+        v = str(row.get("violence", ""))
+        is_violent = "Violent" in v or "VIOLENTO" in v.upper()
         
-        st.error("La aplicación de mapas no se pudo cargar. Faltan componentes.")
-        return # Sale de la función si hay un error de carga
+        # Usamos íconos para MarkerCluster, no CircleMarker
+        icon_color = "red" if is_violent else "blue"
+        
+        delito = row.get("delito", "N/D")
+        fecha = row.get("fecha_hecho", "N/D")
+        alcaldia = row.get("alcaldia", "N/D")
+        colonia = row.get("colonia", "N/D")
+        hora = row.get("hora", "N/D")
 
-    # --- Configuración del ViewState PyDeck ---
-    view_state = pdk.ViewState(
-        latitude=19.4326,
-        longitude=-99.1332,
-        zoom=9.5,
-        pitch=45
+        popup_html = f"""
+        <b>Delito:</b> {delito}<br>
+        <b>Violencia:</b> {v}<br>
+        <b>Fecha:</b> {fecha} {hora}:00<br>
+        <b>Alcaldía:</b> {alcaldia}<br>
+        <b>Colonia:</b> {colonia}
+        """
+
+        folium.Marker(
+            location=[lat, lon],
+            icon=folium.Icon(color=icon_color, icon="info-sign"), # Usamos un ícono simple
+            popup=folium.Popup(popup_html, max_width=300),
+        ).add_to(mc) # <-- Agregar al MarkerCluster, no al mapa directamente
+
+    return m
+
+
+# =========================
+# CAPA 2: HEATMAP
+# =========================
+def build_heatmap(df: pd.DataFrame):
+    m = folium.Map(
+        location=CDMX_CENTER,
+        zoom_start=11,
+        tiles="CartoDB dark_matter",
+        control_scale=True,
     )
 
-    # --- 3. MAPA 1: Histórico ---
-    st.header("Mapa Histórico de Incidencia (Filtrado)")
-    st.markdown("Usa los filtros de la barra lateral **exclusiva del Mapa** para explorar los datos históricos.")
-
-    # Crear una barra lateral dedicada para los filtros del mapa
-    # Esto aísla los filtros del mapa de la barra lateral principal de navegación
-    st.sidebar.markdown("---")
-    st.sidebar.header("Filtros del Mapa Histórico")
-    
-    # --- Filtros en la Barra Lateral del Mapa ---
-    if not df_categorias.empty:
-        # Aseguramos que las categorías por defecto existan
-        default_cats = [c for c in df_categorias['categoria_delito'].tolist() if c in df_categorias['categoria_delito'].iloc[0:2].tolist()]
-        if not default_cats:
-            default_cats = df_categorias['categoria_delito'].iloc[0:1].tolist() if not df_categorias.empty else []
-            
-        crime_type = st.sidebar.multiselect(
-            "Selecciona tipo de crimen:",
-            options=df_categorias['categoria_delito'].tolist(),
-            default=default_cats
-        )
-    else:
-        crime_type = []
-
-    hour_slider = st.sidebar.slider(
-        "Selecciona hora del día:",
-        min_value=0, max_value=23, value=(0, 23), format="%d:00", key="hist_slider"
-    )
-    crime_classification = st.sidebar.radio(
-        "Selecciona clasificación:",
-        ('Violent', 'Non-Violent', 'Ambos'), index=2, key="hist_radio"
+    heat_data = (
+        df[["latitud", "longitud"]]
+        .dropna()
+        .to_numpy()
+        .tolist()
     )
 
-    # --- Lógica del Mapa Histórico ---
-    # Solo llamar a la BD si hay algo seleccionado
-    if crime_type:
-        df_mapa = database.get_filtered_map_data(
-            crime_types=crime_type,
-            hour_range=hour_slider,
-            classification=crime_classification
-        )
-    else:
-        df_mapa = pd.DataFrame({'longitud': [], 'latitud': []}) # DataFrame vacío
+    HeatMap(
+        heat_data,
+        radius=13,
+        blur=18,
+        max_zoom=13,
+    ).add_to(m)
 
-    alcaldias_layer = pdk.Layer(
-        'GeoJsonLayer',
-        data=geojson_data,
-        get_fill_color='[255, 255, 255, 5]',
-        get_line_color='[255, 255, 255, 100]',
-        get_line_width=100,
-        pickable=True,
-        auto_highlight=True,
-        tooltip={
-           "html": "<b>Alcaldía:</b> {nomgeo}", 
-           "style": {
-                "backgroundColor": "steelblue",
-                "color": "white"
-           }
+    title_html = """
+        <h4 style="position: fixed; top: 10px; left: 50%; transform: translateX(-50%);
+                   z-index: 9999; background-color: rgba(0,0,0,0.6); color: white;
+                   padding: 6px 10px; border-radius: 8px; font-size: 14px;">
+            Heatmap de densidad de incidentes
+        </h4>
+    """
+    m.get_root().html.add_child(folium.Element(title_html))
+
+    return m
+
+
+# =========================
+# CAPA 3: COLONIAS (CHOROPLETH)
+# =========================
+def build_colonias_map(df: pd.DataFrame):
+    gj_colonias = load_geojson(COLONIAS_GEOJSON)
+    if gj_colonias is None:
+        st.warning("No se encontró el geojson de colonias. Revisa la ruta, ca.")
+        return None
+
+    # AJUSTA: "cve_col" por la llave que tengas en tu DB y en el geojson
+    df_tmp = df.copy()
+    if "colonia" not in df_tmp.columns:
+        st.warning("El dataframe no tiene columna 'colonia'. Ajusta el código.")
+        return None
+
+    # Simple: conteos por nombre de colonia
+    colonia_counts = (
+        df_tmp.groupby("colonia")
+        .size()
+        .reset_index(name="crime_count")
+    )
+
+    m = folium.Map(
+        location=CDMX_CENTER,
+        zoom_start=11,
+        tiles="CartoDB positron",
+        control_scale=True,
+    )
+
+    # Para hacerlo robusto, creo un dict de {nombre_colonia_normalizado: crime_count}
+    mapping = {
+        str(row["colonia"]).upper(): row["crime_count"]
+        for _, row in colonia_counts.iterrows()
+    }
+
+    def style_function(feature):
+        # 🔁 AJUSTA: Revisa qué campo usa tu GeoJSON para el nombre de la colonia (e.g., "NOM_COL")
+        nom_col = str(feature["properties"].get("NOM_COL", "")).upper()
+        val = mapping.get(nom_col, 0)
+
+        # Escala simple de color
+        if val == 0:
+            fill = "#f5f5f5"
+        elif val < 10:
+            fill = "#fee8c8"
+        elif val < 30:
+            fill = "#fdbb84"
+        else:
+            fill = "#e34a33"
+
+        return {
+            "fillColor": fill,
+            "color": "#555555",
+            "weight": 0.5,
+            "fillOpacity": 0.7,
         }
+
+    def highlight_function(feature):
+        return {
+            "fillColor": "#ffffbf",
+            "color": "#000000",
+            "weight": 1.5,
+            "fillOpacity": 0.9,
+        }
+
+    folium.GeoJson(
+        gj_colonias,
+        name="Colonias",
+        style_function=style_function,
+        highlight_function=highlight_function,
+        tooltip=folium.GeoJsonTooltip(
+            fields=["NOM_COL"],  # 🔁 AJUSTA nombre campo
+            aliases=["Colonia:"],
+            localize=True,
+            sticky=True,
+        ),
+    ).add_to(m)
+
+    legend_html = """
+    <div style="
+        position: fixed;
+        bottom: 30px;
+        left: 30px;
+        z-index: 9999;
+        background-color: white;
+        padding: 10px 14px;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,.25);
+        font-size: 13px;">
+        <b>Intensidad de delitos</b><br>
+        <span style="background:#f5f5f5;border-radius:4px;padding:2px 8px;">0</span><br>
+        <span style="background:#fee8c8;border-radius:4px;padding:2px 8px;">1 - 9</span><br>
+        <span style="background:#fdbb84;border-radius:4px;padding:2px 8px;">10 - 29</span><br>
+        <span style="background:#e34a33;border-radius:4px;padding:2px 8px;">30+</span>
+    </div>
+    """
+    m.get_root().html.add_child(folium.Element(legend_html))
+
+    return m
+
+
+# =========================
+# RENDER PRINCIPAL
+# =========================
+def render():
+    st.title("🗺️ Mapa predictivo de crimen CDMX")
+
+    # Carga de opciones para los filtros
+    try:
+        years, v_opts, d_opts, a_opts, min_hora, max_hora = get_filter_options()
+    except Exception as e:
+        st.error(f"Error cargando opciones de filtros: {e}")
+        return
+
+    # Aplicar filtros y obtener selecciones
+    filters = apply_filters(years, v_opts, d_opts, a_opts, min_hora, max_hora)
+
+    # 🔑 OPTIMIZACIÓN: Se elimina la comprobación para cargar datos por defecto
+    # if not any([filters["years"], filters["violence"], filters["delitos"], filters["alcaldias"]]):
+    #     st.info("Por favor, selecciona al menos un filtro para cargar los datos.")
+    #     return
+
+    # Carga de datos filtrados
+    try:
+        # Usamos un spinner mientras se cargan los datos de DuckDB
+        with st.spinner(f"Cargando {', '.join(filters['delitos'] or filters['alcaldias'] or ['delitos...'])}"):
+            df_filt = load_crime_points(filters)
+    except Exception as e:
+        st.error(f"Error cargando datos de delitos: {e}")
+        return
+
+    if df_filt.empty:
+        st.info("No hay datos de crimen para mostrar con los filtros seleccionados.")
+        return
+    
+    st.success(f"¡Datos cargados! Total de incidentes: {len(df_filt):,}")
+
+    st.markdown(
+        """
+        Usa las pestañas para cambiar de vista:
+
+        - **📍 Puntos**: Cada incidente agrupado por *cluster* (optimizado para carga rápida).
+        - **🔥 Heatmap**: densidad de incidentes.
+        - **🧩 Colonias**: intensidad por colonia (choropleth).
+        """
     )
 
-    # Solo renderizar Heatmap si hay datos
-    if not df_mapa.empty:
-        heatmap_layer = pdk.Layer(
-            'HeatmapLayer',
-            data=df_mapa,
-            get_position='[longitud, latitud]',
-            opacity=0.8,
-            get_weight=1
-        )
-    else:
-        heatmap_layer = pdk.Layer(
-            'HeatmapLayer',
-            data=pd.DataFrame({'longitud': [0], 'latitud': [0]}), # Layer vacío para evitar error
-            get_position='[longitud, latitud]',
-            opacity=0,
-            get_weight=0
-        )
-        st.info("Selecciona al menos un tipo de crimen para ver el mapa histórico.")
+    tabs = st.tabs(["📍 Puntos", "🔥 Heatmap", "🧩 Colonias"])
 
-    st.pydeck_chart(pdk.Deck(
-        layers=[heatmap_layer, alcaldias_layer],
-        initial_view_state=view_state,
-        map_style='mapbox://styles/mapbox/dark-v9',
-    ))
+    # ----- TAB 1: PUNTOS -----
+    with tabs[0]:
+        st.subheader("📍 Incidentes puntuales (MarkerCluster)")
+        # El mapa de puntos es ahora muy rápido
+        m_points = build_points_map(df_filt)
+        st_folium(m_points, width="100%", height=600)
 
-# Llama a la función render() si este módulo se ejecuta directamente (opcional)
-if __name__ == '__main__':
-    st.set_page_config(page_title="Mapa Interactivo", page_icon="🗺️", layout="wide")
-    render()
+    # ----- TAB 2: HEATMAP -----
+    with tabs[1]:
+        st.subheader("🔥 Heatmap de densidad")
+        m_heat = build_heatmap(df_filt)
+        st_folium(m_heat, width="100%", height=600)
+
+    # ----- TAB 3: COLONIAS -----
+    with tabs[2]:
+        st.subheader("🧩 Intensidad por colonia")
+        m_colonias = build_colonias_map(df_filt)
+        if m_colonias is not None:
+            st_folium(m_colonias, width="100%", height=600)
