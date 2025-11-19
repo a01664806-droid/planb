@@ -368,17 +368,6 @@ def render():
             st.info(insights)
 
  # KPI 3: Contexto Clave
-    with col3:
-        st.subheader("Contexto Clave")
-        st.markdown("*Zonas más afectadas (Top 5):*")
-        if top_alcaldias_df is not None and not top_alcaldias_df.empty:
-            for _, row in top_alcaldias_df.iterrows():
-                st.markdown(f"- *{row['alcaldia_hecho']}*: {row['total']} delitos")
-        else:
-            st.markdown("- Datos no disponibles")
-
-    st.divider()
-    st.subheader("Tendencia General de Delitos")
 
     if tendency_df is not None and not tendency_df.empty:
         if "fecha" in tendency_df.columns and "total_delitos" in tendency_df.columns:
