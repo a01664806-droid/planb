@@ -11,8 +11,28 @@ from pathlib import Path
 
 # 🌍 Folium
 import folium
-from folium.plugins import HeatMap, MarkerCluster
+from folium.plugins import (
+    HeatMap,
+    MarkerCluster,
+    HeatMapWithTime,
+    Fullscreen,
+    MiniMap,
+    MeasureControl,
+    MousePosition,
+)
+from folium import GeoJson, GeoJsonTooltip
 from streamlit_folium import st_folium
+
+# Geo
+import geopandas as gpd
+from branca.colormap import linear
+
+# =========================
+# RUTAS GLOBALES (ajusta si hace falta)
+# =========================
+BASE_PATH = Path(__file__).parent.parent
+COLONIAS_SHP = BASE_PATH / "data" / "colonias_cdmx.shp"
+METRO_CSV = BASE_PATH / "data" / "metro_stations.csv"
 
 
 # --- 1. Carga de Modelos y Datos (V3) ---
@@ -21,31 +41,31 @@ def load_models_and_data():
     """
     Carga todos los modelos (XGB v3, KMeans) y datos (Clusters, GeoJSON) necesarios.
     """
-    BASE_PATH = Path(__file__).parent.parent
+    base_path = Path(__file__).parent.parent
 
     # Modelo XGB
     try:
-        model = joblib.load(BASE_PATH / 'violence_xgb_optimizado_v3.joblib')
+        model = joblib.load(base_path / 'violence_xgb_optimizado_v3.joblib')
     except FileNotFoundError:
         st.error("Error: 'violence_xgb_optimizado_v3.joblib' no encontrado. Asegúrate de que esté en el directorio raíz.")
         model = None
 
     # Modelo KMeans
     try:
-        kmeans = joblib.load(BASE_PATH / 'kmeans_zonas.joblib')
+        kmeans = joblib.load(base_path / 'kmeans_zonas.joblib')
     except FileNotFoundError:
         st.error("Error: 'kmeans_zonas.joblib' no encontrado. Asegúrate de que esté en el directorio raíz.")
         kmeans = None
 
     # Info de clusters pre-calculados
     try:
-        df_clusters = pd.read_csv(BASE_PATH / 'cluster_info.csv')
+        df_clusters = pd.read_csv(base_path / 'cluster_info.csv')
     except FileNotFoundError:
         st.error("Error: 'cluster_info.csv' no encontrado. Ejecuta 'crear_cluster_info.py' primero.")
         df_clusters = None
 
     # GeoJSON de alcaldías
-    GEOJSON_PATH = BASE_PATH / "alcaldias.geojson"
+    GEOJSON_PATH = base_path / "alcaldias.geojson"
     try:
         with open(GEOJSON_PATH, 'r', encoding='utf-8') as f:
             geojson_data = json.load(f)
@@ -121,18 +141,14 @@ def preprocess_inputs_mapa_v3(fecha, hora, lat, lon, alcaldia, categoria, kmeans
 def get_color_from_probability(prob):
     """Genera un color HEX (verde → amarillo → rojo) basado en la probabilidad."""
     if prob < 0.65:
-        # Debajo del umbral, verde apagado
         r, g = 0, 180
     elif prob < 0.75:
-        # De Verde (0.65) a Amarillo (0.75)
         g = 255
         r = int(255 * ((prob - 0.65) / 0.10))
     elif prob < 0.85:
-        # De Amarillo (0.75) a Rojo (0.85)
         r = 255
         g = int(255 * (1 - ((prob - 0.75) / 0.10)))
     else:
-        # Rojo (>= 0.85)
         r, g = 255, 0
 
     return f'#{r:02x}{g:02x}00'
@@ -197,7 +213,7 @@ def render():
 
     # Definir la lista de exclusión (DELITOS DE BAJO IMPACTO)
     DEBA = [
-        "DELITO DE BAJO IMPACTO", 
+        "DELITO DE BAJO IMPACTO",
         "LESIONES CULPOSAS",
         "DAÑO A LA PROPIEDAD",
         "ABUSO DE CONFIANZA",
@@ -211,7 +227,7 @@ def render():
         "HOSTIGAMIENTO",
         "ACOSO SEXUAL",
         "VIOLENCIA FAMILIAR",
-        "USO DE DOCUMENTOS FALSOS"
+        "USO DE DOCUMENTOS FALSOS",
     ]
 
     # --- 3. MAPA 1: Histórico ---
@@ -227,17 +243,17 @@ def render():
 
     # Filtros de categorías
     if not df_categorias.empty:
-        # Filtrar las opciones del multiselect
+        df_categorias = df_categorias.copy()
         df_categorias['categoria_delito'] = df_categorias['categoria_delito'].astype(str).str.upper()
         df_categorias_filtradas = df_categorias[~df_categorias['categoria_delito'].isin(DEBA)]
-        
+
         all_categories = df_categorias_filtradas['categoria_delito'].tolist()
-        default_cats = all_categories[:2]
-        
+        default_cats = all_categories[:2] if len(all_categories) >= 2 else all_categories
+
         crime_type = st.sidebar.multiselect(
             "Selecciona tipo de crimen (vacío = todos, **sin Bajo Impacto**):",
             options=all_categories,
-            default=default_cats
+            default=default_cats,
         )
     else:
         all_categories = []
@@ -266,7 +282,7 @@ def render():
         value=True
     )
 
-    # --- LÓGICA DE FILTROS MEJORADA ---
+    # --- LÓGICA DE FILTROS (llamada a la BD se mantiene igual) ---
     if all_categories:
         crime_types_query = crime_type if crime_type else all_categories
 
@@ -286,7 +302,8 @@ def render():
     # Detectar nombres reales de columnas (delito, alcaldía, fecha, hora, clasificación)
     if not df_mapa.empty:
         delito_col = detect_column(df_mapa, [
-            'categoria_delito', 'delito', 'tipo_delito', 'delito_comun'
+            'categoria_delito', 'delito', 'tipo_delito', 'delito_comun',
+            'nombre_real_de_tu_columna_de_delito'  # placeholder
         ])
         alcaldia_col = detect_column(df_mapa, [
             'alcaldia_hecho', 'alcaldia', 'municipio'
@@ -319,7 +336,8 @@ def render():
     # Recalcular detección de columnas por si hubo cambios
     if not df_mapa.empty:
         delito_col = detect_column(df_mapa, [
-            'categoria_delito', 'delito', 'tipo_delito', 'delito_comun'
+            'categoria_delito', 'delito', 'tipo_delito', 'delito_comun',
+            'nombre_real_de_tu_columna_de_delito'
         ])
         alcaldia_col = detect_column(df_mapa, [
             'alcaldia_hecho', 'alcaldia', 'municipio'
@@ -336,14 +354,103 @@ def render():
     else:
         delito_col = alcaldia_col = fecha_col = hora_col = clasif_col = None
 
+    # ===============================
+    #  HISTÓRICO: CAPAS AVANZADAS
+    # ===============================
+
+    # GeoDataFrame de delitos
+    gdf_crimes = None
+    df_points = pd.DataFrame(columns=['latitud', 'longitud'])
+    if not df_mapa.empty:
+        if 'latitud' in df_mapa.columns and 'longitud' in df_mapa.columns:
+            df_points = df_mapa.dropna(subset=['latitud', 'longitud']).copy()
+            try:
+                gdf_crimes = gpd.GeoDataFrame(
+                    df_points,
+                    geometry=gpd.points_from_xy(df_points['longitud'], df_points['latitud']),
+                    crs='EPSG:4326'
+                )
+            except Exception:
+                gdf_crimes = None
+
+    # Colonias + choropleth de Incidents/km²
+    colonias = None
+    choropleth = None
+    bounds = None
+
+    if COLONIAS_SHP.exists():
+        try:
+            colonias_raw = gpd.read_file(COLONIAS_SHP).to_crs(4326)
+            col_name_src = None
+            for c in ['nomut', 'nomdt', 'nombre', 'nom_col', 'nomgeo', 'name', 'colonia']:
+                if c in colonias_raw.columns:
+                    col_name_src = c
+                    break
+
+            if col_name_src is None:
+                colonias_raw['Colony'] = 'Colonia sin nombre'
+            else:
+                colonias_raw['Colony'] = (
+                    colonias_raw[col_name_src]
+                    .astype(str)
+                    .str.strip()
+                )
+
+            colonias = colonias_raw.dissolve(by='Colony', as_index=False)
+            col_m = colonias.to_crs(3857)
+            colonias['Area_km²'] = (col_m.geometry.area / 1e6).values
+
+            if gdf_crimes is not None:
+                joined = gpd.sjoin(
+                    gdf_crimes,
+                    colonias[['Colony', 'geometry']],
+                    how='inner',
+                    predicate='within'
+                )
+                counts = joined.groupby('Colony').size().rename('Incidents').reset_index()
+
+                choropleth = (
+                    colonias[['Colony', 'geometry', 'Area_km²']]
+                    .merge(counts, on='Colony', how='left')
+                    .fillna({'Incidents': 0})
+                )
+
+                choropleth['Incidents_per_km²'] = (
+                    choropleth['Incidents'] /
+                    choropleth['Area_km²'].replace({0: np.nan})
+                ).fillna(0.0)
+
+                minx, miny, maxx, maxy = choropleth.total_bounds
+                bounds = [[miny, minx], [maxy, maxx]]
+        except Exception as e:
+            st.warning(f"No se pudo cargar/usar el shapefile de colonias: {e}")
+            colonias = None
+            choropleth = None
+
+    # Centro del mapa
+    if bounds:
+        center_lon = (bounds[0][1] + bounds[1][1]) / 2
+        center_lat = (bounds[0][0] + bounds[1][0]) / 2
+    else:
+        center_lat, center_lon = CENTER_LAT, CENTER_LON
+
     # Crear mapa base Folium para histórico
     m_hist = folium.Map(
-        location=[CENTER_LAT, CENTER_LON],
+        location=[center_lat, center_lon],
         zoom_start=11,
-        tiles='CartoDB dark_matter'
+        tiles='cartodbpositron',
+        control_scale=True
     )
+    if bounds:
+        m_hist.fit_bounds(bounds)
 
-    # Capa GeoJSON de alcaldías (con NOMGEO correcto)
+    # Controles extra
+    Fullscreen().add_to(m_hist)
+    MiniMap(toggle_display=True).add_to(m_hist)
+    MeasureControl(primary_length_unit='meters').add_to(m_hist)
+    MousePosition(position='bottomright').add_to(m_hist)
+
+    # Capa GeoJSON de alcaldías (bordes suaves)
     folium.GeoJson(
         geojson_data,
         name="Alcaldías",
@@ -360,116 +467,210 @@ def render():
         )
     ).add_to(m_hist)
 
-    # --- HEATMAP + (OPCIONAL) PUNTOS INDIVIDUALES ---
-    if not df_mapa.empty:
-        # Aseguramos que existan columnas de coordenadas (en minúsculas)
-        if 'latitud' not in df_mapa.columns or 'longitud' not in df_mapa.columns:
-            st.warning("No se encontraron columnas 'latitud' y 'longitud' en los datos para el mapa histórico.")
-            df_points = pd.DataFrame(columns=['latitud', 'longitud'])
-        else:
-            df_points = df_mapa.dropna(subset=['latitud', 'longitud']).copy()
+    # --- Choropleth de densidad por colonia (si existe shapefile) ---
+    if choropleth is not None and len(choropleth):
+        vmin = float(choropleth["Incidents_per_km²"].min())
+        vmax = float(choropleth["Incidents_per_km²"].max())
+        if vmin == vmax:
+            vmin, vmax = 0.0, max(1.0, vmax)
 
+        cmap = linear.Purples_09.scale(vmin, vmax)
+        cmap.caption = "Incidentes por km² (según filtros)"
+
+        density_layer = folium.FeatureGroup(
+            name="Densidad de delitos (Inc./km²)",
+            show=True
+        )
+
+        _ch = choropleth.copy()
+        _ch["val"] = _ch["Incidents_per_km²"].astype(float)
+
+        GeoJson(
+            data=_ch.to_json(),
+            style_function=lambda f: {
+                "fillColor": cmap(f["properties"]["val"]) if f["properties"]["val"] is not None else "#f3f0ff",
+                "color": "#4b5563",
+                "weight": 0.3,
+                "fillOpacity": 0.85,
+            },
+            tooltip=GeoJsonTooltip(
+                fields=["Colony", "Incidents", "Area_km²", "Incidents_per_km²"],
+                aliases=["Colonia", "Incidentes", "Área (km²)", "Incidentes/km²"],
+                localize=True,
+                sticky=True,
+            ),
+            name="Densidad de delitos"
+        ).add_to(density_layer)
+
+        density_layer.add_to(m_hist)
+        cmap.add_to(m_hist)
+
+        # Capa de límites de colonias opcional
+        colonies_layer = folium.FeatureGroup(
+            name='Colonias (límites)',
+            show=False
+        )
+        GeoJson(
+            data=colonias[['Colony', 'geometry']].to_json(),
+            style_function=lambda f: {"fillOpacity": 0.0, "color": "#7e22ce", "weight": 1.2},
+            tooltip=GeoJsonTooltip(fields=['Colony'], aliases=['Colonia'])
+        ).add_to(colonies_layer)
+        colonies_layer.add_to(m_hist)
+
+    # --- Estaciones de Metro (si existe CSV) ---
+    if METRO_CSV.exists():
+        try:
+            mdf = pd.read_csv(METRO_CSV)
+
+            lon_m = next((c for c in ['longitud', 'lon', 'longitude', 'lng', 'x'] if c in mdf.columns), None)
+            lat_m = next((c for c in ['latitud', 'lat', 'latitude', 'y'] if c in mdf.columns), None)
+            nam_m = next((c for c in ['nombre', 'name', 'station', 'estacion', 'estación'] if c in mdf.columns), None)
+            xfer_m = next((c for c in ['es_transbordo', 'transbordo', 'transfer', 'is_transfer'] if c in mdf.columns), None)
+
+            if lon_m and lat_m:
+                if nam_m is not None:
+                    mdf = mdf.rename(columns={nam_m: 'station_name'})
+                else:
+                    mdf['station_name'] = np.arange(len(mdf)).astype(str)
+
+                if xfer_m is not None:
+                    mdf = mdf.rename(columns={xfer_m: 'es_transbordo'})
+                else:
+                    mdf['es_transbordo'] = 0
+
+                metro_layer = folium.FeatureGroup(
+                    name='Estaciones de Metro',
+                    show=False
+                )
+
+                for _, r in mdf.iterrows():
+                    lat_v = r.get(lat_m)
+                    lon_v = r.get(lon_m)
+                    if pd.isna(lat_v) or pd.isna(lon_v):
+                        continue
+
+                    folium.CircleMarker(
+                        location=[lat_v, lon_v],
+                        radius=4,
+                        color='#44403c',
+                        fill=True,
+                        fill_opacity=1.0,
+                        tooltip=f"{r.get('station_name','(station)')} | Transferencia: {int(r.get('es_transbordo', 0))}"
+                    ).add_to(metro_layer)
+
+                metro_layer.add_to(m_hist)
+        except Exception as e:
+            st.warning(f"No se pudieron cargar las estaciones de metro: {e}")
+
+    # --- Heatmap estático + animado (24h si hay timestamp) ---
+    if not df_points.empty:
         heat_data = df_points[['latitud', 'longitud']].values.tolist()
-
-        # Heatmap de densidad
         if len(heat_data) > 0:
             HeatMap(
                 heat_data,
                 radius=12,
                 blur=18,
-                max_zoom=16
+                max_zoom=16,
+                name="Heatmap (todos los incidentes filtrados)"
             ).add_to(m_hist)
-        else:
-            st.info("No hay coordenadas válidas para el Heatmap con los filtros actuales.")
 
-        # Capa de puntos individuales con info del delito
-        if show_points and not df_points.empty:
-            # Límite de puntos para no matar el navegador
-            max_points = 5000
-            if len(df_points) > max_points:
-                df_points = df_points.sample(max_points, random_state=42)
+        if fecha_col:
+            df_time = df_points.copy()
+            if hora_col:
+                df_time['_ts'] = pd.to_datetime(
+                    df_time[fecha_col].astype(str) + ' ' + df_time[hora_col].astype(str),
+                    errors='coerce'
+                )
+            else:
+                df_time['_ts'] = pd.to_datetime(df_time[fecha_col], errors='coerce')
 
-            marker_cluster = MarkerCluster(name="Crímenes individuales").add_to(m_hist)
+            if df_time['_ts'].notna().any():
+                tmax = df_time['_ts'].max()
+                tmin = tmax - pd.Timedelta(hours=24)
+                recent = df_time[(df_time['_ts'] >= tmin) & (df_time['_ts'] <= tmax)].copy()
 
-            for _, row in df_points.iterrows():
-                
-                # --- INICIO DEL CÓDIGO FINAL CORREGIDO ---
-                
-                # 1. Obtención segura de todos los campos detectados
-                # Intentamos obtener el valor del delito si la columna fue detectada
-                delito_val = _safe_text(row.get(delito_col)) if delito_col else ""
-                alcaldia_row = _safe_text(row.get(alcaldia_col)) if alcaldia_col else ""
-                hora_row = _safe_text(row.get(hora_col)) if hora_col else ""
-                fecha_row = _safe_text(row.get(fecha_col)) if fecha_col else ""
-                clasif_row = _safe_text(row.get(clasif_col)) if clasif_col else ""
+                if len(recent):
+                    recent['hour'] = recent['_ts'].dt.floor('H')
+                    hours = sorted(recent['hour'].dropna().unique())
+                    heat_seq = [
+                        recent[recent['hour'] == h][['latitud', 'longitud']].values.tolist()
+                        for h in hours
+                    ]
+                    HeatMapWithTime(
+                        heat_seq,
+                        index=[str(h) for h in hours],
+                        auto_play=False,
+                        max_opacity=0.8,
+                        radius=9,
+                        name="Heatmap 24h (animado)"
+                    ).add_to(m_hist)
 
-                # 2. **CAMBIO CLAVE:** Determinamos el texto prioritario para el tooltip/popup.
-                # Si el delito tiene valor, lo usamos. Si no, usamos Alcaldía y Hora.
-                
-                # Texto principal para el Tooltip (priorizamos delito, luego Alcaldía y Hora)
-                tooltip_parts = []
-                
-                if delito_val:
-                    tooltip_parts.append(delito_val)
-                else:
-                    tooltip_parts.append("Incidente") # Usamos "Incidente" solo para el primer elemento si todo falla
-                
-                # Añadimos Alcaldía y Hora al tooltip si existen
-                if alcaldia_row:
-                    tooltip_parts.append(alcaldia_row)
-                if hora_row:
-                    tooltip_parts.append(hora_row)
+    # --- Capa de puntos individuales con info del delito (GOTAS) ---
+    if not df_points.empty and show_points:
+        max_points = 5000
+        if len(df_points) > max_points:
+            df_points = df_points.sample(max_points, random_state=42)
 
-                # Eliminamos el "Incidente" si tenemos info más útil al inicio
-                if tooltip_parts[0] == "Incidente" and len(tooltip_parts) > 1:
-                    tooltip_text = " · ".join(tooltip_parts[1:]) # Quitamos "Incidente" y mostramos el resto
-                else:
-                    tooltip_text = " · ".join(tooltip_parts) # Si tenemos delito real, o solo Incidente, lo mostramos
-                
-                # Si la información es demasiado larga, la cortamos para el tooltip
-                if len(tooltip_text) > 80:
-                     tooltip_text = f"{delito_val or 'Incidente'} · {alcaldia_row or ''} · {hora_row or ''}"
-                
-                if not tooltip_text:
-                     tooltip_text = "Incidente sin detalles de texto"
+        marker_cluster = MarkerCluster(name="Crímenes individuales").add_to(m_hist)
 
+        for _, row in df_points.iterrows():
+            # 1️⃣ Leemos todos los campos posibles
+            delito_val   = _safe_text(row.get(delito_col))   if delito_col   else ""
+            alcaldia_row = _safe_text(row.get(alcaldia_col)) if alcaldia_col else ""
+            hora_row     = _safe_text(row.get(hora_col))     if hora_col     else ""
+            fecha_row    = _safe_text(row.get(fecha_col))    if fecha_col    else ""
+            clasif_row   = _safe_text(row.get(clasif_col))   if clasif_col   else ""
 
-                # 4. Popup (clic en el punto)
-                partes_popup = []
-                
-                # Etiqueta Delito: Con valor real o fallback informativo.
-                delito_popup = delito_val if delito_val else "Desconocido / No registrado"
-                partes_popup.append(f"<b>Delito:</b> {delito_popup}") 
-                
-                # Añadimos los demás campos solo si existen
-                if alcaldia_row:
-                    partes_popup.append(f"<b>Alcaldía:</b> {alcaldia_row}")
-                if fecha_row:
-                    partes_popup.append(f"<b>Fecha:</b> {fecha_row}")
-                if hora_row:
-                    partes_popup.append(f"<b>Hora:</b> {hora_row}")
-                if clasif_row:
-                    partes_popup.append(f"<b>Clasificación:</b> {clasif_row}")
-                
-                if not partes_popup:
-                    partes_popup.append("Sin información adicional disponible.")
+            # 2️⃣ Elegimos el texto principal del delito
+            if delito_val:
+                delito_main = delito_val
+            elif clasif_row:
+                delito_main = clasif_row
+            else:
+                delito_main = "Incidente"
 
-                popup_html = "<br>".join(partes_popup)
+            # 3️⃣ Tooltip (hover sobre la gota)
+            tooltip_parts = [delito_main]
+            if alcaldia_row:
+                tooltip_parts.append(alcaldia_row)
+            if hora_row:
+                tooltip_parts.append(hora_row)
 
-                # --- FIN DEL CÓDIGO FINAL CORREGIDO ---
-                
-                folium.CircleMarker(
-                    location=[row['latitud'], row['longitud']],
-                    radius=4,
-                    color="#FF5733",
-                    fill=True,
-                    fill_color="#FF5733",
-                    fill_opacity=0.8,
-                    tooltip=tooltip_text,
-                    popup=folium.Popup(popup_html, max_width=300)
-                ).add_to(marker_cluster)
-    else:
+            tooltip_text = " · ".join([p for p in tooltip_parts if p])
+            if not tooltip_text:
+                tooltip_text = "Incidente sin detalles de texto"
+
+            # 4️⃣ Popup (clic sobre la gota)
+            partes_popup = []
+            delito_popup = delito_val or clasif_row or "Desconocido / No registrado"
+            partes_popup.append(f"<b>Delito:</b> {delito_popup}")
+
+            if alcaldia_row:
+                partes_popup.append(f"<b>Alcaldía:</b> {alcaldia_row}")
+            if fecha_row:
+                partes_popup.append(f"<b>Fecha:</b> {fecha_row}")
+            if hora_row:
+                partes_popup.append(f"<b>Hora:</b> {hora_row}")
+            if clasif_row:
+                partes_popup.append(f"<b>Clasificación:</b> {clasif_row}")
+
+            if not partes_popup:
+                partes_popup.append("Sin información adicional disponible.")
+
+            popup_html = "<br>".join(partes_popup)
+
+            # 5️⃣ Marcador tipo gota (pin)
+            folium.Marker(
+                location=[row['latitud'], row['longitud']],
+                tooltip=tooltip_text,
+                popup=folium.Popup(popup_html, max_width=300),
+                icon=folium.Icon(color='red', icon='tint', prefix='fa')  # gota roja tipo pin
+            ).add_to(marker_cluster)
+    elif df_mapa.empty:
         st.info("No se encontraron incidentes para los filtros seleccionados (posiblemente solo había bajo impacto o la base de datos está vacía).")
+
+    # LayerControl para elegir capas
+    folium.LayerControl(collapsed=False).add_to(m_hist)
 
     # Mostrar el mapa histórico en Streamlit
     st_folium(m_hist, width="100%", height=600)
@@ -480,21 +681,14 @@ def render():
     if not df_mapa.empty:
         st.caption(f"Incidentes encontrados con los filtros actuales (sin bajo impacto): **{len(df_mapa):,}**")
 
-        # Seleccionamos columnas informativas si existen
         candidate_cols_groups = [
-            # Delito
             ['categoria_delito', 'delito', 'tipo_delito', 'delito_comun'],
-            # Alcaldía
             ['alcaldia_hecho', 'alcaldia', 'municipio'],
-            # Fecha
             ['fecha_hecho', 'fecha', 'fecha_inicio'],
-            # Hora
             ['hora_hecho', 'hora', 'hora_inicio'],
-            # Clasificación
             ['clasificacion', 'clasificacion_delito', 'tipo_violencia'],
-            # Coordenadas
             ['latitud'],
-            ['longitud']
+            ['longitud'],
         ]
 
         cols_to_show = []
@@ -516,7 +710,9 @@ def render():
     else:
         st.caption("No hay incidentes para mostrar en detalle con los filtros actuales.")
 
-    # --- 4. MAPA 2: Predicción Hotspots ---
+    # ==============================
+    # 4. MAPA 2: Predicción Hotspots
+    # ==============================
     st.divider()
     st.header("Predicción de Hotspots Futuros")
     st.markdown("Selecciona una fecha, hora, categoría y alcaldía para predecir zonas de riesgo.")
@@ -536,7 +732,6 @@ def render():
             options=df_alcaldias['alcaldia_hecho'].tolist() if not df_alcaldias.empty else ["Cargando..."]
         )
     with col_map_4:
-        # Se utilizan las categorías FILTRADAS (all_categories) también para la predicción.
         map_categoria = st.selectbox(
             "Categoría de Delito a Predecir:",
             options=all_categories if all_categories else ["Cargando..."]
@@ -583,7 +778,7 @@ def render():
                             'radius': 200 + (prob_violento * 800)
                         })
                 except Exception:
-                    # Silenciar errores por cluster individual (se puede loggear si quieres)
+                    # Silenciar errores por cluster individual
                     pass
 
     df_hotspots = pd.DataFrame(hotspots)
