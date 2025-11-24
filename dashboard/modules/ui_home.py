@@ -200,18 +200,13 @@ def render():
     # ======================
     # 🟦 Imagen THALES ARRIBA
     # ======================
-    # Intentamos primero como ruta relativa, si no, usamos la absoluta que tenías
+    # Cargamos usando ruta relativa dentro del repo
     img_path_thales_rel = get_absolute_path("images/Thales_Logo.png")
-    img_path_thales_abs = Path(
-        "/Users/fernandovazquezrivera/OPERACIONCONTINGENCIA/planb/dashboard/Thales_Logo.png"
-    )
 
     if img_path_thales_rel.exists():
         st.image(img_path_thales_rel, use_container_width=True)
-    elif img_path_thales_abs.exists():
-        st.image(img_path_thales_abs, use_container_width=True)
     else:
-        st.warning("No se encontró el logo de Thales (ni en images/Thales_Logo.png ni en la ruta absoluta).")
+        st.warning("No se encontró el logo de Thales en images/Thales_Logo.png.")
 
     st.divider()
 
