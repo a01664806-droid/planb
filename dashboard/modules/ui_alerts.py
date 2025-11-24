@@ -293,7 +293,12 @@ def render():
 
     # --- CARACTERÍSTICA 1: BÚSQUEDA DE CALLES ---
     st.subheader("1. Predicción Individual")
-    st.markdown("Busca una dirección o ingresa coordenadas para una predicción específica.")
+    st.markdown(
+        "Este pronóstico se calcula por alcaldía y zona horaria: el modelo toma la categoría del delito, "
+        "la fecha/hora y las coordenadas (lat/lon) para ubicar la zona cluster correspondiente. "
+        "Al escribir una dirección, se geocodifica para obtener las coordenadas y se sugiere la alcaldía detectada; "
+        "puedes ajustar cualquiera de los campos antes de generar la predicción."
+    )
     address_query = st.text_input("Buscar dirección (ej. 'Angel de la Independencia'):")
     if st.button("Buscar Dirección"):
         with st.spinner("Geocodificando y buscando alcaldía..."):
@@ -403,24 +408,10 @@ def render():
     if "df_simulacion_completa" in st.session_state:
         st.success(f"Simulación generada para '{st.session_state.simulacion_categoria}'. Mueve el slider para explorar.")
         
-        control_col1, control_col2, control_col3, control_col4 = st.columns([2, 1, 1, 1])
+        control_col1, control_col2 = st.columns([2, 1])
         with control_col1:
             hora_animada = st.slider("Hora de Simulación (0-47h):", 0, 47, 0, format="%d:00")
         with control_col2:
-            min_prob_display = st.slider("Umbral de severidad (%)", 40, 95, 65, step=1)
-        map_styles = {
-            "Nocturno": "mapbox://styles/mapbox/dark-v9",
-            "Claro": "mapbox://styles/mapbox/light-v10",
-            "Satélite": "mapbox://styles/mapbox/satellite-streets-v12"
-        }
-        with control_col3:
-            selected_style_label = st.selectbox(
-                "Estilo del mapa",
-                options=list(map_styles.keys()),
-                index=0
-            )
-        map_style_choice = map_styles[selected_style_label]
-        with control_col4:
             max_hotspots_display = st.slider("Máx. zonas en mapa", 5, 50, 25, step=5)
         
         hora_inicio_sim = st.session_state.get("simulacion_fecha_inicio")
@@ -436,12 +427,8 @@ def render():
             df_hotspots_hora_actual['probabilidad_num'] = (
                 df_hotspots_hora_actual['probabilidad'].str.rstrip('%').astype(float)
             )
-        df_hotspots_filtrados = df_hotspots_hora_actual[
-            df_hotspots_hora_actual['probabilidad_num'] >= min_prob_display
-        ]
         total_disponibles = len(df_hotspots_hora_actual)
-        total_sobre_umbral = len(df_hotspots_filtrados)
-        df_hotspots_visibles = df_hotspots_filtrados.sort_values(
+        df_hotspots_visibles = df_hotspots_hora_actual.sort_values(
             by='probabilidad_num', ascending=False
         ).head(max_hotspots_display)
         total_mostrados = len(df_hotspots_visibles)
@@ -475,25 +462,23 @@ def render():
             st.pydeck_chart(pdk.Deck(
                 layers=[alcaldias_layer_pred, hotspots_layer],
                 initial_view_state=view_state,
-                map_style=map_style_choice,
+                map_style="mapbox://styles/mapbox/dark-v9",
                 tooltip=tooltip
             ))
         
         with info_col:
             if total_disponibles == 0:
                 st.info(f"No se generaron predicciones para la hora {hora_animada}:00.")
-            elif total_sobre_umbral == 0:
-                st.warning(f"Todas las {total_disponibles} zonas quedan por debajo del {min_prob_display}%.")
             elif total_mostrados == 0:
-                st.warning("Reduce el umbral o aumenta el máximo de zonas para visualizar resultados.")
+                st.warning("No hay zonas para visualizar con los parámetros actuales.")
             else:
                 probs = df_hotspots_visibles['probabilidad_num']
                 radio_prom = df_hotspots_visibles['radius'].mean()
                 metric_col1, metric_col2, metric_col3 = st.columns(3)
-                metric_col1.metric("Sobre umbral", total_sobre_umbral)
+                metric_col1.metric("Total de zonas", total_disponibles)
                 metric_col2.metric("En el mapa", total_mostrados)
                 metric_col3.metric("Máxima probabilidad", f"{probs.max():.1f}%")
-                st.caption(f"Mostrando las {total_mostrados} zonas más críticas (de {total_sobre_umbral} sobre el umbral).")
+                st.caption(f"Mostrando las {total_mostrados} zonas más críticas (de {total_disponibles} generadas).")
                 
                 metric_col4, metric_col5 = st.columns(2)
                 metric_col4.metric("Radio promedio", f"{radio_prom:.0f} m")
@@ -505,9 +490,6 @@ def render():
                     use_container_width=True,
                     hide_index=True
                 )
-                
-                st.markdown("**Leyenda rápida**")
-                st.markdown("🔵 <65% • 🟢 65‑75% • 🟡 75‑85% • 🔴 85%+")
     
     else:
         st.info("Genera una simulación para visualizar las zonas críticas en el mapa.")

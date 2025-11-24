@@ -41,12 +41,28 @@ SPANISH_MONTHS = [
     "diciembre",
 ]
 
+HEATMAP_GRADIENT = [
+    (0.0, "#0d47a1"),
+    (0.3, "#1976d2"),
+    (0.6, "#fdd835"),
+    (0.8, "#fb8c00"),
+    (1.0, "#c62828"),
+]
+
+HEATMAP_PRECISION_OPTIONS = {
+    "Alta (≈10 m)": 4,
+    "Media (≈100 m)": 3,
+    "Baja (≈1 km)": 2,
+}
+
+INCIDENT_HEAT_COLOR = "#ff8f00"
+
 
 _TIMELINE_FREQ_OPTIONS = {
-    "Hourly": {"freq": "H", "label_fmt": "%d-%m-%Y %H:%M", "period": "PT1H"},
-    "Daily": {"freq": "D", "label_fmt": "%d-%m-%Y", "period": "P1D"},
-    "Weekly": {"freq": "W", "label_fmt": "Semana %W - %Y", "period": "P1W"},
-    "Monthly": {"freq": "M", "label_fmt": "%b %Y", "period": "P1M"},
+    "Cada hora": {"freq": "H", "label_fmt": "%d-%m-%Y %H:%M", "period": "PT1H"},
+    "Diario": {"freq": "D", "label_fmt": "%d-%m-%Y", "period": "P1D"},
+    "Semanal": {"freq": "W", "label_fmt": "Semana %W - %Y", "period": "P1W"},
+    "Mensual": {"freq": "M", "label_fmt": "%b %Y", "period": "P1M"},
 }
 
 
@@ -112,6 +128,37 @@ class LegendTickFormatter(MacroElement):
             """
         )
 
+class LayerLegend(MacroElement):
+    """Simple HTML legend that documents active map layers."""
+
+    def __init__(self, entries) -> None:
+        super().__init__()
+        self._name = "LayerLegend"
+        self.entries = entries
+        self._template = Template(
+            """
+            {% macro html(this, kwargs) %}
+            <div id="layer-legend"
+                 style="position: fixed; bottom: 35px; left: 35px; z-index: 9999;
+                        background: rgba(18, 18, 18, 0.82); padding: 12px 16px;
+                        color: #fff; font-size: 13px; border-radius: 10px;
+                        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);">
+                <div style="font-weight: 600; margin-bottom: 6px;">Código de colores</div>
+                {% for entry in this.entries %}
+                    <div style="display: flex; align-items: center; margin-bottom: 4px;">
+                        <span style="display: inline-block; width: 30px; height: 14px;
+                                     border-radius: {{ entry.border_radius }};
+                                     background: {{ entry.background }};
+                                     border: 1px solid rgba(255, 255, 255, 0.4);
+                                     margin-right: 8px;"></span>
+                        <span style="white-space: nowrap;">{{ entry.label }}</span>
+                    </div>
+                {% endfor %}
+            </div>
+            {% endmacro %}
+            """
+        )
+
 
 class TimelineHeatMap(HeatMapWithTime):
     """Patched HeatMapWithTime that can compute bounds on nested frame data."""
@@ -139,8 +186,8 @@ def _init_session_state() -> None:
         st.session_state.last_clicked_address = None
 
 
-def _prepare_timelapse_payload(df: pd.DataFrame, freq_key: str, max_frames: int):
-    """Build HeatMapWithTime payload and labels respecting a frame budget."""
+def _prepare_timelapse_payload(df: pd.DataFrame, freq_key: str, max_frames: int, precision: int):
+    """Build HeatMapWithTime payload with aggregated density per frame."""
     freq_meta = _TIMELINE_FREQ_OPTIONS[freq_key]
     freq = freq_meta["freq"]
     truncated = False
@@ -149,11 +196,11 @@ def _prepare_timelapse_payload(df: pd.DataFrame, freq_key: str, max_frames: int)
     df['time_bin'] = df['datetime'].dt.floor(freq)
     df.dropna(subset=['time_bin'], inplace=True)
     if df.empty:
-        return [], [], pd.DataFrame(), truncated
+        return [], [], truncated
 
     unique_bins = sorted(df['time_bin'].unique())
     if not unique_bins:
-        return [], [], pd.DataFrame(), truncated
+        return [], [], truncated
 
     if len(unique_bins) > max_frames:
         truncated = True
@@ -167,12 +214,18 @@ def _prepare_timelapse_payload(df: pd.DataFrame, freq_key: str, max_frames: int)
     heatmap_frames = []
     labels = []
     for bin_value in selected_bins:
-        slice_df = grouped.get_group(bin_value)
-        heatmap_frames.append(slice_df[['latitud', 'longitud']].values.tolist())
+        try:
+            slice_df = grouped.get_group(bin_value)
+        except KeyError:
+            heatmap_frames.append([])
+            labels.append(bin_value.strftime(freq_meta['label_fmt']))
+            continue
+
+        frame_points, _ = _build_heatmap_points(slice_df, precision=precision)
+        heatmap_frames.append(frame_points)
         labels.append(bin_value.strftime(freq_meta['label_fmt']))
 
-    sliced_df = df[df['time_bin'].isin(selected_bins)].copy()
-    return heatmap_frames, labels, sliced_df, truncated
+    return heatmap_frames, labels, truncated
 
 
 def _build_timestamped_geojson(df: pd.DataFrame, max_points: int = TIMELINE_POINT_LIMIT):
@@ -248,6 +301,87 @@ def load_geojson(geojson_file):
     except FileNotFoundError:
         st.error(f"Error: GeoJSON file not found at '{geojson_file}'. Please provide it.")
         return None
+
+
+def _build_heatmap_points(df: pd.DataFrame, precision: int = 3):
+    """
+    Aggregate crimes into lat/lon bins (roughly 100m at precision=3) so intensity reflects density.
+    Returns coordinates with weights and the maximum weight for normalization.
+    """
+    if df.empty:
+        return [], 0
+
+    df_coords = df.dropna(subset=['latitud', 'longitud'])
+    if df_coords.empty:
+        return [], 0
+
+    df_coords = df_coords.copy()
+    df_coords['lat_bin'] = df_coords['latitud'].round(precision)
+    df_coords['lon_bin'] = df_coords['longitud'].round(precision)
+
+    grouped = (
+        df_coords
+        .groupby(['lat_bin', 'lon_bin'])
+        .agg(
+            weight=('latitud', 'size'),
+            latitud=('latitud', 'mean'),
+            longitud=('longitud', 'mean'),
+        )
+        .reset_index(drop=True)
+    )
+    grouped = grouped[grouped['weight'] > 0]
+    if grouped.empty:
+        return [], 0
+
+    heat_data = grouped[['latitud', 'longitud', 'weight']].values.tolist()
+    max_weight = grouped['weight'].max()
+    return heat_data, max_weight
+
+
+def _heatmap_gradient_css():
+    colors = [color for _, color in HEATMAP_GRADIENT]
+    return f"linear-gradient(90deg, {', '.join(colors)})"
+
+
+def _build_layer_legend_entries(show_alcaldias: bool, show_heatmap: bool, show_markers: bool, heatmap_dynamic: bool):
+    entries = []
+    if show_alcaldias:
+        entries.append({
+            "label": "Densidad por alcaldía",
+            "background": "linear-gradient(90deg, #ffffcc, #fd8d3c, #b10026)",
+            "border_radius": "4px",
+        })
+    if show_heatmap:
+        entries.append({
+            "label": "Mapa de calor dinámico" if heatmap_dynamic else "Mapa de calor (densidad)",
+            "background": _heatmap_gradient_css(),
+            "border_radius": "4px",
+        })
+    if show_markers:
+        entries.append({
+            "label": "Puntos individuales",
+            "background": "#6a1b9a",
+            "border_radius": "50%",
+        })
+    return entries
+
+
+def _add_incident_heat_circles(map_obj, df: pd.DataFrame, limit: int, radius_meters: int) -> int:
+    """Draw a soft heat stain per incident to highlight exact coordinates."""
+    subset = df[['latitud', 'longitud']].dropna().head(limit)
+    count = 0
+    for _, row in subset.iterrows():
+        folium.Circle(
+            location=[row['latitud'], row['longitud']],
+            radius=radius_meters,
+            color=INCIDENT_HEAT_COLOR,
+            weight=0,
+            fill=True,
+            fill_color=INCIDENT_HEAT_COLOR,
+            fill_opacity=0.18,
+        ).add_to(map_obj)
+        count += 1
+    return count
 
 
 def render_interactive_map(embed: bool = False, df_crime: Optional[pd.DataFrame] = None):
@@ -326,8 +460,61 @@ def render_interactive_map(embed: bool = False, df_crime: Optional[pd.DataFrame]
         with st.sidebar.expander("Personalizar mapa de calor"):
             heatmap_radius = st.slider("Radio del mapa de calor", 5, 30, 15)
             heatmap_blur = st.slider("Difuminado del mapa de calor", 5, 30, 10)
+            precision_options = list(HEATMAP_PRECISION_OPTIONS.keys())
+            precision_default = "Media (≈100 m)" if "Media (≈100 m)" in precision_options else precision_options[0]
+            precision_label = st.select_slider(
+                "Resolución de densidad (agrupa incidentes cercanos)",
+                options=precision_options,
+                value=precision_default,
+                help="Mayor resolución = celdas más pequeñas (~10 m)."
+            )
+            heatmap_precision = HEATMAP_PRECISION_OPTIONS.get(precision_label, 3)
+            heatmap_dynamic = st.toggle(
+                "Activar heatmap dinámico (animado)",
+                value=False,
+                help="Muestra una animación temporal con la densidad de incidentes por intervalo."
+            )
+            individual_heat_limit = st.slider(
+                "Máximo de incidentes con mancha individual",
+                min_value=100,
+                max_value=3000,
+                value=600,
+                step=100
+            )
+            individual_heat_radius = st.slider(
+                "Radio de cada mancha individual (m)",
+                min_value=25,
+                max_value=250,
+                value=90,
+                step=5
+            )
+            if heatmap_dynamic:
+                freq_options = list(_TIMELINE_FREQ_OPTIONS.keys())
+                default_freq = "Diario" if "Diario" in freq_options else freq_options[0]
+                timeline_freq_label = st.selectbox(
+                    "Intervalo temporal para la animación",
+                    options=freq_options,
+                    index=freq_options.index(default_freq),
+                )
+                timeline_max_frames = st.slider(
+                    "Máximo de cuadros en la animación",
+                    min_value=10,
+                    max_value=80,
+                    value=40,
+                    step=5,
+                    help="Limita la cantidad de frames para evitar animaciones pesadas."
+                )
+            else:
+                timeline_freq_label = None
+                timeline_max_frames = None
     else:
         heatmap_radius = heatmap_blur = None
+        heatmap_precision = 3
+        heatmap_dynamic = False
+        individual_heat_limit = 0
+        individual_heat_radius = 0
+        timeline_freq_label = None
+        timeline_max_frames = None
 
     if not df_crime.empty and len(selected_date_range) == 2:
         start_date, end_date = pd.to_datetime(selected_date_range[0]), pd.to_datetime(selected_date_range[1])
@@ -378,8 +565,50 @@ def render_interactive_map(embed: bool = False, df_crime: Optional[pd.DataFrame]
 
     if not df_filtered.empty:
         if show_heatmap:
-            heat_data = [[row['latitud'], row['longitud']] for _, row in df_filtered.iterrows()]
-            HeatMap(heat_data, radius=heatmap_radius, blur=heatmap_blur, name="Mapa de calor delictivo").add_to(m)
+            if heatmap_dynamic and timeline_freq_label:
+                timeline_frames, timeline_labels, truncated = _prepare_timelapse_payload(
+                    df_filtered,
+                    freq_key=timeline_freq_label,
+                    max_frames=timeline_max_frames or 40,
+                    precision=heatmap_precision
+                )
+                has_points = any(len(frame) > 0 for frame in timeline_frames)
+                if has_points:
+                    TimelineHeatMap(
+                        timeline_frames,
+                        index=timeline_labels,
+                        auto_play=False,
+                        period=_TIMELINE_FREQ_OPTIONS[timeline_freq_label]["period"],
+                        name="Mapa de calor dinámico",
+                        radius=heatmap_radius,
+                        min_opacity=0.05,
+                        gradient=dict(HEATMAP_GRADIENT),
+                    ).add_to(m)
+                    if truncated:
+                        st.sidebar.info("Se limitó la animación para mantener un rendimiento óptimo.")
+                else:
+                    st.sidebar.info("No hay suficientes datos para animar el mapa de calor con el filtro actual.")
+            else:
+                heat_data, heat_max = _build_heatmap_points(df_filtered, precision=heatmap_precision)
+                if heat_data:
+                    HeatMap(
+                        heat_data,
+                        radius=heatmap_radius,
+                        blur=heatmap_blur,
+                        min_opacity=0.05,
+                        max_val=heat_max if heat_max > 0 else 1,
+                        gradient=dict(HEATMAP_GRADIENT),
+                        name="Mapa de calor delictivo"
+                    ).add_to(m)
+                else:
+                    st.sidebar.info("No hay coordenadas válidas para generar el mapa de calor con el filtro actual.")
+            if individual_heat_limit > 0 and individual_heat_radius > 0:
+                _add_incident_heat_circles(
+                    m,
+                    df_filtered,
+                    limit=individual_heat_limit,
+                    radius_meters=individual_heat_radius
+                )
 
         if show_markers:
             marker_cluster = MarkerCluster(name="Incidentes delictivos").add_to(m)
@@ -409,6 +638,9 @@ def render_interactive_map(embed: bool = False, df_crime: Optional[pd.DataFrame]
     MeasureControl(position="bottomleft", primary_length_unit="kilometers").add_to(m)
     folium.LayerControl().add_to(m)
     m.add_child(folium.LatLngPopup())
+    legend_entries = _build_layer_legend_entries(show_alcaldias, show_heatmap, show_markers, heatmap_dynamic)
+    if legend_entries:
+        m.get_root().add_child(LayerLegend(legend_entries))
 
     col1, col2, col3 = st.columns(3)
     with col1:

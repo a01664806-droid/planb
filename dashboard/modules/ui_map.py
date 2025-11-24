@@ -272,13 +272,17 @@ def render():
     if str(DEFAULT_MAP_YEAR) in history_labels:
         default_history_index = history_labels.index(str(DEFAULT_MAP_YEAR))
 
-    selected_history_label = st.selectbox(
-        "Rango histórico a cargar para el mapa:",
-        history_labels,
-        index=default_history_index,
-        help="Filtra los datos por año para acelerar la carga inicial o consulta todo el histórico."
-    )
-    selected_year = None if selected_history_label == ALL_YEARS_OPTION else DEFAULT_MAP_YEAR
+    with st.sidebar:
+        st.subheader("📅 Rango histórico")
+        selected_history_label = st.selectbox(
+            "Rango histórico a cargar para el mapa:",
+            history_labels,
+            index=default_history_index,
+            help="Filtra los datos por año para acelerar la carga inicial o consulta todo el histórico."
+        )
+        st.divider()
+
+    selected_year = None
     if selected_history_label != ALL_YEARS_OPTION:
         try:
             selected_year = int(selected_history_label)

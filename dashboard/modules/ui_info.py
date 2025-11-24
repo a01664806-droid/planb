@@ -66,6 +66,14 @@ def _axis(title, orient=None):
         base["orient"] = orient
     return base
 
+def _auto_height(count, base=260, per_item=38):
+    """Calcula altura dinámica para listas categóricas."""
+    try:
+        n = int(count)
+    except (TypeError, ValueError):
+        return base
+    return max(base, n * per_item)
+
 def _safe_uniques(series: pd.Series) -> list:
     """Regresa valores únicos limpios (sin NaN, '', 'nan', 'delito de bajo impacto')."""
     try:
@@ -106,6 +114,28 @@ def _violence_label(value):
         pass
     value_str = str(value)
     return VIOLENCE_TRANSLATIONS.get(value_str, value_str)
+
+def _format_hour_24(hour_value) -> str:
+    """Convierte una hora (0-23) a formato 24h con sufijo :00."""
+    try:
+        hour_int = int(hour_value) % 24
+    except (TypeError, ValueError):
+        return str(hour_value)
+    return f"{hour_int:02d}:00"
+
+def _format_period_label(label: str) -> str:
+    """Formatea etiquetas tipo 'Noche (19-07)' a 'Noche (19:00 – 07:00)'."""
+    if not isinstance(label, str) or "(" not in label or ")" not in label:
+        return label
+    try:
+        name, range_part = label.split("(", 1)
+        range_part = range_part.rstrip(")")
+        start_raw, end_raw = [part.strip() for part in range_part.split("-", 1)]
+        start_fmt = _format_hour_24(start_raw)
+        end_fmt = _format_hour_24(end_raw)
+        return f"{name.strip()} ({start_fmt} – {end_fmt})"
+    except ValueError:
+        return label
 
 # =================== DATA LOAD (DuckDB) ===================
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -171,7 +201,7 @@ def get_violence_time_metrics_cached() -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False, max_entries=2)
 def compute_eda_aggregates(df: pd.DataFrame):
-    YEAR_RANGE, MONTH_RANGE, HOUR_RANGE = range(2015, 2026), range(1, 13), range(0, 24)
+    YEAR_RANGE, MONTH_RANGE, HOUR_RANGE = range(2016, 2025), range(1, 13), range(0, 24)
 
     df = df.copy()
     df["anio_inicio"] = pd.to_numeric(df.get("anio_inicio"), errors="coerce")
@@ -346,21 +376,23 @@ def compute_eda_aggregates(df: pd.DataFrame):
     }
 
 # =================== CHART PRIMS ===================
-def bar_chart(df, x, y, *, x_type="O", y_type="Q", sort=None, title="", color=None, width=700, height=350, x_axis=None, y_axis=None):
-    return alt.Chart(df, **_cfg(width, height)).mark_bar(color=color).encode(
+def bar_chart(df, x, y, *, x_type="O", y_type="Q", sort=None, title=None, color=None, width=700, height=350, x_axis=None, y_axis=None):
+    chart = alt.Chart(df, **_cfg(width, height)).mark_bar(color=color).encode(
         x=alt.X(f"{x}:{x_type}", sort=sort, axis=x_axis),
         y=alt.Y(f"{y}:{y_type}", axis=y_axis),
         tooltip=[f"{x}:{x_type}", f"{y}:{y_type}"],
-    ).properties(title=title)
+    )
+    return chart.properties(title=title) if title else chart
 
-def barh_chart(df, y, x, *, y_type="N", x_type="Q", sort=None, title="", color=None, width=700, height=350, x_axis=None, y_axis=None):
-    return alt.Chart(df, **_cfg(width, height)).mark_bar(color=color).encode(
+def barh_chart(df, y, x, *, y_type="N", x_type="Q", sort=None, title=None, color=None, width=700, height=350, x_axis=None, y_axis=None):
+    chart = alt.Chart(df, **_cfg(width, height)).mark_bar(color=color).encode(
         x=alt.X(f"{x}:{x_type}", axis=x_axis),
         y=alt.Y(f"{y}:{y_type}", sort=sort, axis=y_axis),
         tooltip=[f"{y}:{y_type}", f"{x}:{x_type}"],
-    ).properties(title=title)
+    )
+    return chart.properties(title=title) if title else chart
 
-def line_chart(df, x, y, color_field=None, *, x_type="O", y_type="Q", title="", width=700, height=350, x_axis=None, y_axis=None, point=False):
+def line_chart(df, x, y, color_field=None, *, x_type="O", y_type="Q", title=None, width=700, height=350, x_axis=None, y_axis=None, point=False):
     mk = alt.Chart(df, **_cfg(width, height)).mark_line(point=point, strokeWidth=2).encode(
         x=alt.X(f"{x}:{x_type}", axis=x_axis),
         y=alt.Y(f"{y}:{y_type}", axis=y_axis),
@@ -374,7 +406,7 @@ def line_chart(df, x, y, color_field=None, *, x_type="O", y_type="Q", title="", 
                 scale=alt.Scale(range=THEME_PALETTE[:uniq]),
             )
         )
-    return mk.properties(title=title)
+    return mk.properties(title=title) if title else mk
 
 def donut_chart(
     df,
@@ -388,9 +420,21 @@ def donut_chart(
     inner_radius=70,
     legend_title=None,
 ):
-    n = max(3, len(df)) if isinstance(df, pd.DataFrame) else 3
+    df_chart = df.copy() if isinstance(df, pd.DataFrame) else df
+    percent_col = "__percent"
+    percent_label_col = "__percent_label"
+
+    if isinstance(df_chart, pd.DataFrame) and not df_chart.empty:
+        total = df_chart[count_col].sum()
+        if total and total != 0:
+            df_chart[percent_col] = (df_chart[count_col] / total) * 100
+            df_chart[percent_label_col] = df_chart[percent_col].map(lambda v: f"{v:.1f}%")
+
+    n = max(3, len(df_chart)) if isinstance(df_chart, pd.DataFrame) else 3
     colors = colors or THEME_PALETTE[:n]
-    return alt.Chart(df, **_cfg(width, height)).mark_arc(innerRadius=inner_radius).encode(
+
+    base = alt.Chart(df_chart, **_cfg(width, height))
+    arc = base.mark_arc(innerRadius=inner_radius).encode(
         theta=alt.Theta(f"{count_col}:Q"),
         color=alt.Color(
             f"{field}:N",
@@ -401,15 +445,31 @@ def donut_chart(
             alt.Tooltip(f"{field}:N", title="Categoría"),
             alt.Tooltip(f"{count_col}:Q", title="Conteo"),
         ],
-    ).properties(title=title)
+    )
+    if title:
+        arc = arc.properties(title=title)
+
+    if isinstance(df_chart, pd.DataFrame) and percent_label_col in df_chart.columns:
+        text = base.mark_text(
+            radius=inner_radius + 40,
+            color="#F8FAFC",
+            fontSize=14,
+            fontWeight="bold",
+        ).encode(
+            theta=alt.Theta(f"{count_col}:Q"),
+            text=alt.Text(f"{percent_label_col}:N"),
+        )
+        return arc + text
+    return arc
 
 def heatmap_chart(df, x, y, z, *, title="", width=700, height=350, x_axis=None, y_axis=None):
-    return alt.Chart(df, **_cfg(width, height)).mark_rect().encode(
+    chart = alt.Chart(df, **_cfg(width, height)).mark_rect().encode(
         x=alt.X(f"{x}:N", axis=x_axis),
         y=alt.Y(f"{y}:N", axis=y_axis),
         color=alt.Color(f"{z}:Q", scale=alt.Scale(scheme="blues")),
         tooltip=[f"{x}:N", f"{y}:N", f"{z}:Q"],
-    ).properties(title=title)
+    )
+    return chart.properties(title=title) if title else chart
 
 def section_title(text: str):
     st.markdown(
@@ -556,6 +616,46 @@ def render():
     para identificar patrones temporales y espaciales.
     """
     )
+    hypothesis_card = """
+    <div style="
+        background: rgba(30, 58, 138, 0.25);
+        border: 1px solid rgba(59, 130, 246, 0.5);
+        border-radius: 16px;
+        padding: 1.25rem;
+        margin-bottom: 1rem;
+    ">
+        <div style="font-size: 1.1rem; font-weight: 700; color: #E0E7FF; margin-bottom: 0.5rem;">
+            Nuestra hipótesis
+        </div>
+        <div style="display: flex; flex-wrap: wrap; gap: 1rem;">
+            <div style="
+                flex: 1;
+                min-width: 180px;
+                background: rgba(30, 64, 175, 0.5);
+                border-radius: 12px;
+                padding: 0.85rem;
+            ">
+                <div style="font-size: 2rem; font-weight: 700; color: #BFDBFE;">80%</div>
+                <div style="color: #E5E7EB;">Delitos violentos durante la noche</div>
+            </div>
+            <div style="
+                flex: 1;
+                min-width: 180px;
+                background: rgba(249, 158, 11, 0.35);
+                border-radius: 12px;
+                padding: 0.85rem;
+            ">
+                <div style="font-size: 2rem; font-weight: 700; color: #FDE68A;">80%</div>
+                <div style="color: #E5E7EB;">Delitos no violentos durante el día</div>
+            </div>
+        </div>
+        <p style="color: #E2E8F0; margin-top: 0.75rem; margin-bottom: 0;">
+            Planteamos que los crímenes violentos concentran hasta el 80% de los incidentes nocturnos,
+            mientras que los delitos no violentos alcanzan una proporción similar durante el día.
+        </p>
+    </div>
+    """
+    st.markdown(hypothesis_card, unsafe_allow_html=True)
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Incidentes filtrados", f"{len(df):,}")
@@ -565,9 +665,27 @@ def render():
     st.subheader("Resultados del Análisis de Horarios (Violencia)")
     if not df_metrics.empty:
         df_metrics = df_metrics.rename(
-            columns={"franja_horaria": "Periodo", "porcentaje": "Porcentaje"}
+            columns={
+                "franja_horaria": "Periodo",
+                "porcentaje": "Porcentaje",
+                "total": "Total",
+            }
         )
-        st.dataframe(df_metrics, use_container_width=True)
+        df_metrics_display = df_metrics.copy()
+
+        df_metrics_display["Periodo"] = df_metrics_display["Periodo"].apply(
+            _format_period_label
+        )
+        if "Total" in df_metrics_display.columns:
+            df_metrics_display["Total"] = df_metrics_display["Total"].apply(
+                lambda v: f"{int(round(v)):,}" if pd.notna(v) else ""
+            )
+        if "Porcentaje" in df_metrics_display.columns:
+            df_metrics_display["Porcentaje"] = df_metrics_display["Porcentaje"].apply(
+                lambda v: f"{float(v):.1f}%" if pd.notna(v) else ""
+            )
+
+        st.dataframe(df_metrics_display, use_container_width=True, hide_index=True)
 
         try:
             noche_pct = float(
@@ -673,8 +791,7 @@ def render():
                     yr_filtered,
                     "year",
                     "count",
-                    sort=list(range(2015, 2026)),
-                    title="Crímenes por Año",
+                    sort=list(range(2016, 2025)),
                     color=THEME_PALETTE[0],
                     x_axis=_axis("Año"),
                     y_axis=_axis("Número de casos"),
@@ -705,7 +822,6 @@ def render():
                     "month_name",
                     "count",
                     sort=[MONTH_NAMES[m] for m in range(1, 13)],
-                    title="Crímenes por Mes",
                     color=THEME_PALETTE[2],
                     x_axis=_axis("Mes"),
                     y_axis=_axis("Número de casos"),
@@ -738,7 +854,6 @@ def render():
                     "hour",
                     "count",
                     sort=list(range(24)),
-                    title="Distribución por Hora del Día",
                     color=THEME_PALETTE[1],
                     x_axis=_axis("Hora del día"),
                     y_axis=_axis("Número de casos"),
@@ -769,15 +884,16 @@ def render():
             chosen_alc = alc_selected or alc_options
             alc_filtered = alc_df[alc_df["alcaldia"].isin(chosen_alc)]
             alc_filtered = alc_filtered.sort_values("count", ascending=True)
+            alc_height = _auto_height(len(alc_filtered), base=280, per_item=40)
             st.altair_chart(
                 barh_chart(
                     alc_filtered,
                     "alcaldia",
                     "count",
-                    title="Distribución por Alcaldía",
                     color=THEME_PALETTE[3],
                     x_axis=_axis("Número de casos"),
                     y_axis=_axis("Alcaldía", orient="left"),
+                    height=alc_height,
                 ),
                 use_container_width=True,
             )
@@ -801,15 +917,16 @@ def render():
                         key="colonias_top_slider",
                     )
             cols_filtered = col_df.head(top_col).sort_values("count", ascending=True)
+            col_height = _auto_height(len(cols_filtered), base=280, per_item=40)
             st.altair_chart(
                 barh_chart(
                     cols_filtered,
                     "colonia",
                     "count",
-                    title=f"Top {top_col} colonias con más incidentes",
                     color=THEME_PALETTE[4],
                     x_axis=_axis("Número de casos"),
                     y_axis=_axis("Colonia", orient="left"),
+                    height=col_height,
                 ),
                 use_container_width=True,
             )
@@ -833,16 +950,16 @@ def render():
                         key="delitos_top_slider",
                     )
             delitos_filtered = del_df.head(top_del).sort_values("count", ascending=True)
+            del_height = _auto_height(len(delitos_filtered), base=280, per_item=40)
             st.altair_chart(
                 barh_chart(
                     delitos_filtered,
                     "delito",
                     "count",
-                    title=f"Top {top_del} delitos con mayor frecuencia",
                     color=THEME_PALETTE[5],
                     x_axis=_axis("Número de casos"),
                     y_axis=_axis("Tipo de delito", orient="left"),
-                    height=320,
+                    height=del_height,
                 ),
                 use_container_width=True,
             )
@@ -869,16 +986,48 @@ def render():
             chosen_cls = cls_selected or cls_options
             cls_filtered = cls_df[cls_df["classification"].isin(chosen_cls)].copy()
             cls_filtered["classification_label"] = cls_filtered["classification"].apply(_classification_label)
-            st.altair_chart(
-                donut_chart(
-                    cls_filtered,
-                    "classification_label",
-                    "count",
-                    title="Distribución por Clasificación",
-                    legend_title="",
+            total_cls = cls_filtered["count"].sum()
+            if total_cls > 0:
+                cls_filtered["pct"] = (cls_filtered["count"] / total_cls) * 100
+                cls_filtered["pct_label"] = cls_filtered["pct"].map(lambda v: f"{v:.1f}%")
+            else:
+                cls_filtered["pct"] = 0
+                cls_filtered["pct_label"] = "0%"
+            cls_filtered = cls_filtered.sort_values("pct", ascending=True)
+            n_cls = max(1, len(cls_filtered))
+            chart_height = max(240, n_cls * 50)
+            base = alt.Chart(cls_filtered, **_cfg(height=chart_height))
+            bars = base.mark_bar(cornerRadius=6).encode(
+                x=alt.X("pct:Q", axis=_axis("Porcentaje (%)")),
+                y=alt.Y(
+                    "classification_label:N",
+                    sort="-x",
+                    axis=_axis("Clasificación", orient="left"),
                 ),
-                use_container_width=True,
+                color=alt.Color(
+                    "classification_label:N",
+                    scale=alt.Scale(range=THEME_PALETTE[:n_cls]),
+                    legend=None,
+                ),
+                tooltip=[
+                    alt.Tooltip("classification_label:N", title="Clasificación"),
+                    alt.Tooltip("count:Q", title="Casos"),
+                    alt.Tooltip("pct:Q", title="Porcentaje", format=".1f"),
+                ],
             )
+            labels = base.mark_text(
+                align="left",
+                baseline="middle",
+                dx=5,
+                color="#F8FAFC",
+                fontSize=13,
+                fontWeight="bold",
+            ).encode(
+                x=alt.X("pct:Q"),
+                y=alt.Y("classification_label:N", sort="-x"),
+                text=alt.Text("pct_label:N"),
+            )
+            st.altair_chart(bars + labels, use_container_width=True)
 
     v_counts = agg["v_counts"]
     if v_counts.empty:
@@ -897,22 +1046,55 @@ def render():
                     )
             chosen_violence = viol_selected or viol_options
             viol_filtered = v_counts[v_counts[label_field].isin(chosen_violence)]
-            colors = (
-                ["#1E3A8A", "#A3B3C2"]
-                if set(v_counts.get("violence", [])) >= {"Violent", "Non-Violent"}
-                else THEME_PALETTE[: max(1, len(viol_filtered))]
-            )
-            st.altair_chart(
-                donut_chart(
-                    viol_filtered,
-                    label_field,
-                    "count",
-                    title="Violento vs No Violento",
-                    colors=colors,
-                    legend_title="",
-                ),
-                use_container_width=True,
-            )
+            if viol_filtered.empty:
+                st.info("No hay datos para el filtro seleccionado.")
+            else:
+                viol_filtered = viol_filtered.copy()
+                total_viol = viol_filtered["count"].sum()
+                if total_viol > 0:
+                    viol_filtered["pct"] = (viol_filtered["count"] / total_viol) * 100
+                    viol_filtered["pct_label"] = viol_filtered["pct"].map(lambda v: f"{v:.1f}%")
+                else:
+                    viol_filtered["pct"] = 0
+                    viol_filtered["pct_label"] = "0%"
+                viol_filtered = viol_filtered.sort_values("pct", ascending=True)
+                colors = (
+                    ["#1E3A8A", "#F59E0B"]
+                    if set(v_counts.get("violence", [])) >= {"Violent", "Non-Violent"}
+                    else THEME_PALETTE[: max(1, len(viol_filtered))]
+                )
+                base = alt.Chart(viol_filtered, **_cfg(height=220))
+                bars = base.mark_bar(cornerRadius=10).encode(
+                    x=alt.X("pct:Q", axis=_axis("Porcentaje (%)")),
+                    y=alt.Y(
+                        f"{label_field}:N",
+                        sort="-x",
+                        axis=_axis("Tipo de violencia", orient="left"),
+                    ),
+                    color=alt.Color(
+                        f"{label_field}:N",
+                        scale=alt.Scale(range=colors),
+                        legend=None,
+                    ),
+                    tooltip=[
+                        alt.Tooltip(f"{label_field}:N", title="Tipo"),
+                        alt.Tooltip("count:Q", title="Casos"),
+                        alt.Tooltip("pct:Q", title="Porcentaje", format=".1f"),
+                    ],
+                )
+                labels = base.mark_text(
+                    align="left",
+                    baseline="middle",
+                    dx=5,
+                    color="#F8FAFC",
+                    fontSize=14,
+                    fontWeight="bold",
+                ).encode(
+                    x=alt.X("pct:Q"),
+                    y=alt.Y(f"{label_field}:N", sort="-x"),
+                    text=alt.Text("pct_label:N"),
+                )
+                st.altair_chart(bars + labels, use_container_width=True)
 
     stacked = agg["stacked"]
     if stacked.empty:
@@ -956,28 +1138,39 @@ def render():
             if stacked_filtered.empty:
                 st.info("Selecciona al menos una alcaldía y una clasificación.")
             else:
+                stacked_filtered = stacked_filtered.copy()
+                stacked_filtered["cls_label"] = stacked_filtered["crime_classification"].apply(
+                    _classification_label
+                )
+                alc_order = [
+                    alc for alc in order_mun if alc in stacked_filtered["alcaldia_std"].unique()
+                ]
+                chart_height = _auto_height(len(alc_order), base=360, per_item=32)
                 ch = (
-                    alt.Chart(stacked_filtered, **_cfg(width=900, height=420))
+                    alt.Chart(stacked_filtered, **_cfg(width=950, height=chart_height))
                     .mark_bar()
                     .encode(
                         x=alt.X("count:Q", axis=_axis("Número de casos")),
                         y=alt.Y(
                             "alcaldia_std:N",
-                            sort=[alc for alc in order_mun if alc in stacked_filtered["alcaldia_std"].unique()],
+                            sort=alc_order,
                             axis=_axis("Alcaldía", orient="left"),
                         ),
                         color=alt.Color(
-                            "crime_classification:N",
+                            "cls_label:N",
                             scale=alt.Scale(
                                 range=THEME_PALETTE[
-                                    : max(3, stacked_filtered["crime_classification"].nunique())
+                                    : max(3, stacked_filtered["cls_label"].nunique())
                                 ]
                             ),
                             legend=alt.Legend(title="Clasificación"),
                         ),
-                        tooltip=["alcaldia_std:N", "crime_classification:N", "count:Q"],
+                        tooltip=[
+                            alt.Tooltip("alcaldia_std:N", title="Alcaldía"),
+                            alt.Tooltip("cls_label:N", title="Clasificación"),
+                            alt.Tooltip("count:Q", title="Casos"),
+                        ],
                     )
-                    .properties(title="Alcaldía vs Clasificación de Delito (apilado)")
                 )
                 st.altair_chart(ch, use_container_width=True)
 
