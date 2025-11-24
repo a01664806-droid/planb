@@ -8,7 +8,6 @@ from modules import ui_home, ui_analysis, ui_info, ui_ourteam, ui_alerts, ui_map
 # --- Configuración de página (debe ir antes de cualquier render) ---
 st.set_page_config(
     page_title="Plataforma de Inteligencia Delictiva CDMX",
-    page_icon="🗺",
     layout="wide",
     initial_sidebar_state="collapsed" # Mantenemos colapsado
 )

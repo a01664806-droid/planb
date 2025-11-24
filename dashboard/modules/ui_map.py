@@ -264,7 +264,7 @@ def render():
     Función principal de renderizado para el módulo del Mapa Interactivo (Folium).
     """
     st.markdown("---")
-    st.title("🗺️ Mapa Interactivo de Incidencia Delictiva")
+    st.title("Mapa Interactivo de Incidencia Delictiva")
 
     available_years = get_available_years()
     history_labels = [ALL_YEARS_OPTION] + [str(year) for year in available_years]
@@ -273,7 +273,7 @@ def render():
         default_history_index = history_labels.index(str(DEFAULT_MAP_YEAR))
 
     with st.sidebar:
-        st.subheader("📅 Rango histórico")
+        st.subheader("Rango histórico")
         selected_history_label = st.selectbox(
             "Rango histórico a cargar para el mapa:",
             history_labels,
