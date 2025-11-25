@@ -158,7 +158,7 @@ def _tendency_line_chart(
 # --- Render principal para la página de Analysis ---
 def render():
     # Título y descripción
-    st.title("🕓 Análisis de Tendencia y Pronóstico")
+    st.title("Análisis de Tendencia y Pronóstico")
     st.markdown("Análisis histórico y pronóstico a corto y mediano plazo.")
 
     # --- Carga de Datos y Modelos ---
