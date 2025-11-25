@@ -137,6 +137,20 @@ def _format_period_label(label: str) -> str:
     except ValueError:
         return label
 
+def _tooltip(field: str, type_code: str, *, title: str | None = None, fmt: str | None = None):
+    """
+    Construye tooltips con formato de miles por defecto para valores cuantitativos.
+    Permite sobreescribir el formato cuando se requiera algo distinto (p.ej. porcentajes).
+    """
+    kwargs = {}
+    if title:
+        kwargs["title"] = title
+    if fmt:
+        kwargs["format"] = fmt
+    elif (type_code or "").upper().startswith("Q"):
+        kwargs["format"] = ",.0f"
+    return alt.Tooltip(f"{field}:{type_code}", **kwargs)
+
 # =================== DATA LOAD (DuckDB) ===================
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_info_df(year_min: int = 2016, limit: int | None = None) -> pd.DataFrame:
@@ -380,7 +394,7 @@ def bar_chart(df, x, y, *, x_type="O", y_type="Q", sort=None, title=None, color=
     chart = alt.Chart(df, **_cfg(width, height)).mark_bar(color=color).encode(
         x=alt.X(f"{x}:{x_type}", sort=sort, axis=x_axis),
         y=alt.Y(f"{y}:{y_type}", axis=y_axis),
-        tooltip=[f"{x}:{x_type}", f"{y}:{y_type}"],
+        tooltip=[_tooltip(x, x_type), _tooltip(y, y_type)],
     )
     return chart.properties(title=title) if title else chart
 
@@ -388,7 +402,7 @@ def barh_chart(df, y, x, *, y_type="N", x_type="Q", sort=None, title=None, color
     chart = alt.Chart(df, **_cfg(width, height)).mark_bar(color=color).encode(
         x=alt.X(f"{x}:{x_type}", axis=x_axis),
         y=alt.Y(f"{y}:{y_type}", sort=sort, axis=y_axis),
-        tooltip=[f"{y}:{y_type}", f"{x}:{x_type}"],
+        tooltip=[_tooltip(y, y_type), _tooltip(x, x_type)],
     )
     return chart.properties(title=title) if title else chart
 
@@ -396,7 +410,7 @@ def line_chart(df, x, y, color_field=None, *, x_type="O", y_type="Q", title=None
     mk = alt.Chart(df, **_cfg(width, height)).mark_line(point=point, strokeWidth=2).encode(
         x=alt.X(f"{x}:{x_type}", axis=x_axis),
         y=alt.Y(f"{y}:{y_type}", axis=y_axis),
-        tooltip=[f"{x}:{x_type}", f"{y}:{y_type}"],
+        tooltip=[_tooltip(x, x_type), _tooltip(y, y_type)],
     )
     if color_field and color_field in df.columns and not df.empty:
         uniq = max(1, df[color_field].nunique())
@@ -442,8 +456,8 @@ def donut_chart(
             legend=alt.Legend(title=legend_title) if legend_title is not None else None,
         ),
         tooltip=[
-            alt.Tooltip(f"{field}:N", title="Categoría"),
-            alt.Tooltip(f"{count_col}:Q", title="Conteo"),
+            _tooltip(field, "N", title="Categoría"),
+            _tooltip(count_col, "Q", title="Conteo"),
         ],
     )
     if title:
@@ -467,7 +481,7 @@ def heatmap_chart(df, x, y, z, *, title="", width=700, height=350, x_axis=None, 
         x=alt.X(f"{x}:N", axis=x_axis),
         y=alt.Y(f"{y}:N", axis=y_axis),
         color=alt.Color(f"{z}:Q", scale=alt.Scale(scheme="blues")),
-        tooltip=[f"{x}:N", f"{y}:N", f"{z}:Q"],
+        tooltip=[_tooltip(x, "N"), _tooltip(y, "N"), _tooltip(z, "Q")],
     )
     return chart.properties(title=title) if title else chart
 
@@ -1010,9 +1024,9 @@ def render():
                     legend=None,
                 ),
                 tooltip=[
-                    alt.Tooltip("classification_label:N", title="Clasificación"),
-                    alt.Tooltip("count:Q", title="Casos"),
-                    alt.Tooltip("pct:Q", title="Porcentaje", format=".1f"),
+                    _tooltip("classification_label", "N", title="Clasificación"),
+                    _tooltip("count", "Q", title="Casos"),
+                    _tooltip("pct", "Q", title="Porcentaje", fmt=".1f"),
                 ],
             )
             labels = base.mark_text(
@@ -1077,9 +1091,9 @@ def render():
                         legend=None,
                     ),
                     tooltip=[
-                        alt.Tooltip(f"{label_field}:N", title="Tipo"),
-                        alt.Tooltip("count:Q", title="Casos"),
-                        alt.Tooltip("pct:Q", title="Porcentaje", format=".1f"),
+                        _tooltip(label_field, "N", title="Tipo"),
+                        _tooltip("count", "Q", title="Casos"),
+                        _tooltip("pct", "Q", title="Porcentaje", fmt=".1f"),
                     ],
                 )
                 labels = base.mark_text(
@@ -1166,9 +1180,9 @@ def render():
                             legend=alt.Legend(title="Clasificación"),
                         ),
                         tooltip=[
-                            alt.Tooltip("alcaldia_std:N", title="Alcaldía"),
-                            alt.Tooltip("cls_label:N", title="Clasificación"),
-                            alt.Tooltip("count:Q", title="Casos"),
+                            _tooltip("alcaldia_std", "N", title="Alcaldía"),
+                            _tooltip("cls_label", "N", title="Clasificación"),
+                            _tooltip("count", "Q", title="Casos"),
                         ],
                     )
                 )
