@@ -28,7 +28,23 @@ st.set_page_config(page_title="Alerta Policial", page_icon="🛡️", layout="wi
 N8N_WEBHOOK_URL = "https://n8n.tektititc.org/webhook/90408216-1fba-4806-b062-2ab8afb30fea"
 
 # --- Configuración de map tiles (Mapbox opcional) ---
-MAPBOX_API_KEY = st.secrets.get("MAPBOX_API_KEY") or os.environ.get("MAPBOX_API_KEY")
+def _resolve_mapbox_api_key():
+    try:
+        secrets_proxy = st.secrets
+    except Exception:
+        secrets_proxy = None
+    token = None
+    if secrets_proxy is not None:
+        try:
+            token = secrets_proxy["MAPBOX_API_KEY"]
+        except Exception:
+            try:
+                token = secrets_proxy.get("MAPBOX_API_KEY") if hasattr(secrets_proxy, "get") else None
+            except Exception:
+                token = None
+    return token or os.environ.get("MAPBOX_API_KEY")
+
+MAPBOX_API_KEY = _resolve_mapbox_api_key()
 if MAPBOX_API_KEY:
     pdk.settings.mapbox_api_key = MAPBOX_API_KEY
     MAP_PROVIDER = "mapbox"
@@ -199,64 +215,75 @@ def preprocess_inputs_v3(fecha, hora, lat, lon, alcaldia, categoria, kmeans_mode
     }
     return input_df, contexto
 
-@st.cache_data(ttl=3600) 
-def precalculate_48h_simulation_v3(_model_xgb, _model_kmeans, _df_clusters, 
-                               map_fecha_sim, map_categoria_sim):
+def precalculate_48h_simulation_v3(_model_xgb, _df_clusters, map_fecha_sim, map_categoria_sim):
     """
-    Ejecuta el modelo V3 para TODAS las 50 zonas en un rango de 48 horas.
+    Ejecuta el modelo V3 para las zonas conocidas en un rango de 48 horas.
+    Optimizado para generar las 2,400 combinaciones en lotes vectorizados.
     """
-    hotspots_48h = []
-    start_date = pd.to_datetime(map_fecha_sim)
+    if _model_xgb is None or _df_clusters is None or _df_clusters.empty:
+        return pd.DataFrame()
 
-    for hora_futura in range(48): # Itera de 0 a 47
+    start_date = pd.to_datetime(map_fecha_sim)
+    clusters = _df_clusters.copy()
+    clusters['cluster_id'] = pd.to_numeric(clusters.get('cluster_id'), errors='coerce').fillna(-1).astype(int)
+    clusters['latitud'] = pd.to_numeric(clusters.get('latitud'), errors='coerce')
+    clusters['longitud'] = pd.to_numeric(clusters.get('longitud'), errors='coerce')
+    if 'alcaldia_comun' in clusters.columns:
+        clusters['alcaldia_comun'] = clusters['alcaldia_comun'].fillna('DESCONOCIDA')
+    elif 'alcaldia_hecho' in clusters.columns:
+        clusters['alcaldia_comun'] = clusters['alcaldia_hecho'].fillna('DESCONOCIDA')
+    else:
+        clusters['alcaldia_comun'] = 'DESCONOCIDA'
+    if 'cluster_label' not in clusters.columns:
+        clusters['cluster_label'] = clusters.get('calle_cercana')
+    clusters['cluster_label'] = clusters['cluster_label'].fillna(clusters.get('calle_cercana')).fillna("Ubicación sin referencia")
+
+    horas_simuladas = []
+    for hora_futura in range(48):
         fecha_actual = start_date + timedelta(hours=hora_futura)
         hora_actual = fecha_actual.hour
-        
-        for index, cluster in _df_clusters.iterrows():
-            try:
-                fecha_dt = pd.to_datetime(fecha_actual)
-                dia_de_la_semana = fecha_dt.dayofweek
-                es_fin_de_semana = int(dia_de_la_semana >= 5)
-                mes = fecha_dt.month
-                dia_del_mes = fecha_dt.day
-                es_quincena = int(dia_del_mes in [14,15,16, 28,29,30,31,1,2])
-                
-                zona_cluster = cluster['cluster_id']
-                franja_horaria = map_to_time_slot(hora_actual)
-                zona_hora = f"{zona_cluster}_{franja_horaria}" 
-                mes_sin = np.sin(2 * np.pi * mes / 12)
-                mes_cos = np.cos(2 * np.pi * mes / 12)
-                
-                input_data = {
-                    'alcaldia_hecho': [cluster['alcaldia_comun']], 
-                    'categoria_delito': [map_categoria_sim],
-                    'dia_de_la_semana': [dia_de_la_semana], 
-                    'es_fin_de_semana': [es_fin_de_semana],
-                    'es_quincena': [es_quincena], 
-                    'zona_hora': [zona_hora], 
-                    'mes_sin': [mes_sin], 
-                    'mes_cos': [mes_cos],
-                }
-                input_df = pd.DataFrame(input_data)
-                
-                probability = _model_xgb.predict_proba(input_df)
-                prob_violento = probability[0][1]
-                
-                hotspots_48h.append({
-                    'hora_simulacion': hora_futura, 
-                    'lat': cluster['latitud'],
-                    'lon': cluster['longitud'],
-                    'probabilidad': f"{prob_violento*100:.1f}%",
-                    'probabilidad_num': prob_violento * 100,
-                    'hora_proyectada': fecha_actual.strftime("%d %b %Y - %H:00"),
-                    'calle': cluster.get('cluster_label') or cluster.get('calle_cercana') or "Ubicación sin referencia",
-                    'radius': 200 + (prob_violento * 800),
-                    'color_rgb': get_color_from_probability(prob_violento)
-                })
-            except Exception as e:
-                print(f"Error prediciendo cluster {cluster['cluster_id']} / hora {hora_futura}: {e}")
-    
-    return pd.DataFrame(hotspots_48h)
+        dia_de_la_semana = fecha_actual.dayofweek
+        es_fin_de_semana = int(dia_de_la_semana >= 5)
+        dia_del_mes = fecha_actual.day
+        mes = fecha_actual.month
+        es_quincena = int(dia_del_mes in [14, 15, 16, 28, 29, 30, 31, 1, 2])
+        franja_horaria = map_to_time_slot(hora_actual)
+        zona_hora = clusters['cluster_id'].astype(str) + f"_{franja_horaria}"
+        mes_sin = np.sin(2 * np.pi * mes / 12)
+        mes_cos = np.cos(2 * np.pi * mes / 12)
+
+        input_df = pd.DataFrame({
+            'alcaldia_hecho': clusters['alcaldia_comun'],
+            'categoria_delito': map_categoria_sim,
+            'dia_de_la_semana': dia_de_la_semana,
+            'es_fin_de_semana': es_fin_de_semana,
+            'es_quincena': es_quincena,
+            'zona_hora': zona_hora,
+            'mes_sin': mes_sin,
+            'mes_cos': mes_cos,
+        })
+
+        try:
+            probability = _model_xgb.predict_proba(input_df)
+        except Exception as exc:
+            st.error(f"Error ejecutando la simulación: {exc}")
+            return pd.DataFrame()
+
+        prob_column = probability[:, 1] if probability.shape[1] > 1 else probability[:, 0]
+        hora_proyectada = fecha_actual.strftime("%d %b %Y - %H:00")
+        horas_simuladas.append(pd.DataFrame({
+            'hora_simulacion': hora_futura,
+            'lat': clusters['latitud'],
+            'lon': clusters['longitud'],
+            'probabilidad': [f"{p*100:.1f}%" for p in prob_column],
+            'probabilidad_num': prob_column * 100,
+            'hora_proyectada': hora_proyectada,
+            'calle': clusters['cluster_label'],
+            'radius': 200 + (prob_column * 800),
+            'color_rgb': [get_color_from_probability(p) for p in prob_column],
+        }))
+
+    return pd.concat(horas_simuladas, ignore_index=True)
 
 # --- 5. Función de Chat ---
 def call_gemini_analyst(pregunta_usuario, contexto_modelo):
@@ -415,8 +442,7 @@ def render():
     if st.button("Generar Simulación de 48h"):
         with st.spinner(f"Calculando predicciones para TODA la CDMX (48 horas)..."):
             df_simulacion_completa = precalculate_48h_simulation_v3(
-                model_xgb, model_kmeans, df_clusters,
-                map_fecha_sim, map_categoria_sim
+                model_xgb, df_clusters, map_fecha_sim, map_categoria_sim
             )
             st.session_state.df_simulacion_completa = df_simulacion_completa
             st.session_state.simulacion_categoria = map_categoria_sim 
