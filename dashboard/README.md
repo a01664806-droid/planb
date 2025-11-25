@@ -28,7 +28,7 @@ Install Python dependencies inside a virtual environment:
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
 python -m pip install --upgrade pip
-pip install streamlit pandas numpy duckdb geopandas shapely folium streamlit-folium statsmodels scikit-learn xgboost joblib altair plotly pydeck geopy requests unidecode branca pyproj certifi
+pip install -r requirements.txt
 ```
 
 > Tip: if you plan to distribute this project internally, capture the exact versions with `pip freeze > requirements.txt` once the install succeeds.
