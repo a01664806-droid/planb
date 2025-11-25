@@ -1,6 +1,6 @@
 streamlit==1.50.0
 pandas==2.3.3
-numpy==2.3.4
+numpy==2.2.2
 duckdb==1.4.2
 geopandas==1.1.1
 shapely==2.1.2
